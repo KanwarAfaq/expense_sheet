@@ -8,11 +8,12 @@ import ArchiveList from './components/ArchiveList';
 import Toast from './components/Toast';
 import Auth from './components/Auth';
 import AdminPanel from './components/AdminPanel';
+import CategorySummary from './components/CategorySummary';
 
 export default function App() {
   const [session, setSession] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
-  
+  const [recoveryMode, setRecoveryMode] = useState(false);
   const [expenses, setExpenses] = useState([]);
   const [archives, setArchives] = useState([]);
   const [currentView, setCurrentView] = useState(() => localStorage.getItem('expensely_view') || 'home');
@@ -176,8 +177,14 @@ export default function App() {
   const currentTotalSpent = expenses.reduce((sum, item) => sum + parseFloat(item.amount), 0);
 
   // If not authenticated, render the Auth screen
-  if (!session) {
-    return <Auth onAuthSuccess={() => {}} />; 
+ if (!session || recoveryMode) {
+    return (
+      <Auth 
+        onAuthSuccess={() => {}} 
+        enterRecovery={() => setRecoveryMode(true)}
+        exitRecovery={() => setRecoveryMode(false)}
+      />
+    ); 
   }
 
   return (
@@ -196,9 +203,16 @@ export default function App() {
           <div className="text-center py-12 text-sm text-slate-400 font-semibold">Syncing database data...</div>
         ) : (
           <div className="space-y-6">
-            {currentView === 'home' && (
+          
+              
+             
+                
+               {currentView === 'home' && (
               <>
                 <Hero totalExpenses={currentTotalSpent} budget={budget} />
+                
+                {/* NEW CATEGORY SUMMARY COMPONENT */}
+                <CategorySummary expenses={expenses} />
                 
                 {/* Only Admin can archive the month */}
                 {currentUser?.role === 'admin' && (
@@ -213,6 +227,7 @@ export default function App() {
                 )}
               </>
             )}
+              
             {currentView === 'add' && (
               <div className="max-w-md mx-auto">
                 <ExpenseForm onAddExpense={handleAddExpense} />

@@ -50,9 +50,11 @@ export default function Navbar({ currentView, setCurrentView, currentUser, onLog
           })}
         </div>
 
-        {/* User Profile & Logout System */}
-        {currentUser && (
-          <div className="flex items-center gap-3 shrink-0">
+       {/* User Profile & Logout System */}
+        <div className="flex items-center gap-3 shrink-0">
+          
+          {/* We still only show the avatar if the profile loaded successfully */}
+          {currentUser ? (
             <div className="hidden md:flex items-center gap-2 text-right">
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-slate-900 leading-tight">
@@ -68,15 +70,20 @@ export default function Navbar({ currentView, setCurrentView, currentUser, onLog
                 className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200"
               />
             </div>
-            
-            <button 
-              onClick={onLogout}
-              className="text-xs bg-red-50 hover:bg-red-100 text-red-600 font-bold px-3 py-1.5 rounded-lg transition-colors border border-red-100 cursor-pointer"
-            >
-              Logout
-            </button>
-          </div>
-        )}
+          ) : (
+             <div className="text-xs font-bold text-slate-400 hidden md:block">
+               Syncing profile...
+             </div>
+          )}
+          
+          {/* The Logout Button is now GUARANTEED to show up */}
+          <button 
+            onClick={onLogout}
+            className="text-xs bg-red-50 hover:bg-red-100 text-red-600 font-bold px-3 py-1.5 rounded-lg transition-colors border border-red-100 cursor-pointer"
+          >
+            Logout
+          </button>
+        </div>
 
       </div>
     </nav>
