@@ -1,0 +1,43 @@
+name: Build Android app
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['capacitor.config.json', 'public/icon-512.png', '.github/workflows/android.yml']
+permissions:
+  contents: write
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - run: npm ci
+      - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || 'https://placeholder.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY || 'placeholder' }}
+      - run: npx cap add android
+      - name: App icon + build
+        run: |
+          pip install pillow -q
+          python3 - <<'PY'
+          from PIL import Image
+          import os
+          src = Image.open('public/icon-512.png').convert('RGBA')
+          for d, s in {'mdpi':48,'hdpi':72,'xhdpi':96,'xxhdpi':144,'xxxhdpi':192}.items():
+              p = f'android/app/src/main/res/mipmap-{d}'
+              for n in ('ic_launcher.png','ic_launcher_round.png','ic_launcher_foreground.png'):
+                  src.resize((s,s)).save(f'{p}/{n}')
+          PY
+          cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+      - name: Publish APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android/app/build/outputs/apk/debug/app-debug.apk Expensely.apk
+          gh release delete android-latest -y --cleanup-tag || true
+          gh release create android-latest Expensely.apk --title "Expensely Android app" --notes "Install Expensely.apk on your phone. It always loads the latest live version, so it updates itself."
