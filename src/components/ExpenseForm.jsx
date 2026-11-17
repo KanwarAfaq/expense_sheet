@@ -1,138 +1,82 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { toDayInput, money, fmtDate } from '../lib/utils';
+import { Card, Title, Field, Chip, EntryCard, inputCls, btnPrimary } from './ui';
+import Icon from './Icons';
 
-export default function ExpenseForm({ onAddExpense }) {
+export default function ExpenseForm({ onAddExpense, categories, noteMap, recent }) {
   const [amount, setAmount] = useState('');
   const [note, setNote] = useState('');
-  
-  // NEW: State for the custom date picker (Defaults to today's date)
-  const [entryDate, setEntryDate] = useState(() => new Date().toISOString().split('T')[0]);
-  
-  const [categories, setCategories] = useState(['Food', 'Bills', 'Leisure', 'Transit']);
-  const [selectedCategory, setSelectedCategory] = useState('Food');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
-  
-  const dropdownRef = useRef(null);
+  const [date, setDate] = useState(() => toDayInput());
+  const [category, setCategory] = useState(() => localStorage.getItem('expensely_lastcat') || '');
+  const [newCat, setNewCat] = useState('');
+  const [showAll, setShowAll] = useState(false);
+  const [autoHint, setAutoHint] = useState('');
+  const [busy, setBusy] = useState(false);
+  const amountRef = useRef(null);
 
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setIsDropdownOpen(false);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  useEffect(() => { if (!category && categories[0]) setCategory(categories[0]); }, [categories, category]);
+  const top = categories.slice(0, showAll ? categories.length : 8);
 
-  const filteredCategories = categories.filter(cat =>
-    cat.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  const handleSelectCategory = (cat) => {
-    setSelectedCategory(cat);
-    setSearchQuery('');
-    setIsDropdownOpen(false);
+  // Typing/choosing an item that was entered before brings its category back automatically.
+  const onNote = (v) => {
+    setNote(v);
+    const hit = noteMap[v.trim().toLowerCase()];
+    if (hit) { setCategory(hit.category); setAutoHint(`Category “${hit.category}” filled in from your last “${hit.note}”`); } else setAutoHint('');
+  };
+  const addCategory = () => {
+    const t = newCat.trim(); if (!t) return;
+    const name = categories.find((c) => c.toLowerCase() === t.toLowerCase()) || t.charAt(0).toUpperCase() + t.slice(1);
+    setCategory(name); setNewCat(''); setAutoHint('');
   };
 
-  const handleAddCustomCategory = () => {
-    const trimmed = searchQuery.trim();
-    if (!trimmed) return;
-    const formatted = trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
-    
-    if (!categories.includes(formatted)) {
-      setCategories(prev => [...prev, formatted]);
-    }
-    setSelectedCategory(formatted);
-    setSearchQuery('');
-    setIsDropdownOpen(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0 || !category || busy) return;
+    setBusy(true);
+    const ok = await onAddExpense({ category, amount: amt, note: note.trim(), date });
+    setBusy(false);
+    if (ok) { localStorage.setItem('expensely_lastcat', category); setAmount(''); setNote(''); setAutoHint(''); setDate(toDayInput()); amountRef.current?.focus(); }
   };
-
- const handleSubmit = (e) => {
-  e.preventDefault();
-  if (!amount) return;
-
-  // Pass the selected date up to App.jsx
-  onAddExpense({
-    category: selectedCategory,
-    amount: parseFloat(amount),
-    note: note.trim(),
-    date: entryDate
-  });
-
-  setAmount('');
-  setNote('');
-  setEntryDate(new Date().toISOString().split('T')[0]); // Reset to today after submitting
-};
+  const sugg = Object.values(noteMap).map((x) => x.note);
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs transition-all duration-300">
-      <h2 className="text-base font-bold text-slate-900 mb-4 flex items-center gap-2">
-        <span>➕</span> New Transaction
-      </h2>
-      
-      <form onSubmit={handleSubmit} className="space-y-4">
-        
-        {/* NEW: Date Input Field */}
-        <div>
-          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            Transaction Date
-          </label>
-          <input 
-            type="date" 
-            value={entryDate} 
-            onChange={(e) => setEntryDate(e.target.value)}
-            max={new Date().toISOString().split('T')[0]} // Prevents picking future dates
-            className="w-full h-10 px-3 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-semibold text-slate-700 bg-white cursor-pointer"
-            required
-          />
-        </div>
-
-        {/* Searchable Category Selector */}
-        <div className="relative" ref={dropdownRef}>
-          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Category</label>
-          <div onClick={() => setIsDropdownOpen(!isDropdownOpen)} className="w-full h-10 px-3 border border-slate-200 rounded-xl text-sm flex items-center justify-between cursor-pointer bg-white transition-all hover:border-slate-300 select-none">
-            <span className="text-slate-800 font-semibold">{selectedCategory}</span>
-            <span className="text-slate-400 text-xs">{isDropdownOpen ? '▲' : '▼'}</span>
+    <div className="mx-auto grid max-w-5xl gap-5 lg:grid-cols-5">
+      <Card className="lg:col-span-3">
+        <Title icon="plus">New expense</Title>
+        <form onSubmit={submit} className="space-y-5">
+          <div className="rounded-2xl bg-gradient-to-br from-indigo-50 to-violet-50 p-4 ring-1 ring-indigo-100">
+            <span className="mb-1 block text-[11px] font-bold uppercase tracking-wider text-indigo-400">Amount</span>
+            <div className="flex items-center gap-2"><span className="text-3xl font-black text-indigo-300">$</span>
+              <input ref={amountRef} type="number" inputMode="decimal" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" required className="w-full bg-transparent text-4xl font-black tabular-nums text-slate-900 outline-none placeholder:text-indigo-200" />
+            </div>
           </div>
 
-          {isDropdownOpen && (
-            <div className="absolute left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-lg z-50 overflow-hidden">
-              <div className="p-2 border-b border-slate-100">
-                <input type="text" placeholder="Type to search or create custom category..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full h-8 px-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-hidden focus:border-indigo-500" autoFocus />
-              </div>
-              <div className="max-h-40 overflow-y-auto divide-y divide-slate-50">
-                {filteredCategories.map((cat) => (
-                  <button key={cat} type="button" onClick={() => handleSelectCategory(cat)} className="w-full text-left px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer flex justify-between items-center">
-                    <span>{cat}</span>
-                    {cat === selectedCategory && <span className="text-indigo-600 text-xs">✓</span>}
-                  </button>
-                ))}
-                {searchQuery.trim() && !categories.some(c => c.toLowerCase() === searchQuery.trim().toLowerCase()) && (
-                  <button type="button" onClick={handleAddCustomCategory} className="w-full text-left px-3 py-2.5 text-xs font-semibold text-indigo-600 bg-indigo-50/50 hover:bg-indigo-50 transition-colors cursor-pointer flex items-center gap-1.5">
-                    <span>✨ Create new category:</span> <span className="italic truncate font-bold text-slate-800">"{searchQuery}"</span>
-                  </button>
-                )}
-              </div>
+          <Field label="Item / note">
+            <input list="note-list" value={note} onChange={(e) => onNote(e.target.value)} placeholder="e.g. Rice, Electricity bill…" className={inputCls} maxLength={120} />
+            <datalist id="note-list">{sugg.map((s) => <option key={s} value={s} />)}</datalist>
+            {autoHint && <p className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-emerald-600"><Icon name="sparkle" className="h-3.5 w-3.5" />{autoHint}</p>}
+          </Field>
+
+          <div>
+            <span className="mb-2 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-400"><span>Category</span>{category && <span className="normal-case tracking-normal"><Chip category={category} /></span>}</span>
+            <div className="flex flex-wrap gap-2">
+              {top.map((c) => <button type="button" key={c} onClick={() => { setCategory(c); setAutoHint(''); }} className={`rounded-full border px-3.5 py-2 text-sm font-bold transition cursor-pointer ${category === c ? 'border-transparent bg-indigo-600 text-white shadow-md shadow-indigo-500/30' : 'border-slate-200 bg-white text-slate-600 hover:border-indigo-300'}`}>{c}</button>)}
+              {categories.length > 8 && <button type="button" onClick={() => setShowAll(!showAll)} className="rounded-full border border-dashed border-slate-300 px-3.5 py-2 text-sm font-bold text-slate-400 cursor-pointer">{showAll ? 'Less' : `+${categories.length - 8} more`}</button>}
             </div>
-          )}
-        </div>
+            <div className="mt-3 flex gap-2"><input value={newCat} onChange={(e) => setNewCat(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCategory(); } }} placeholder="New category (saved for next time)" className={inputCls} maxLength={40} /><button type="button" onClick={addCategory} className="h-11 shrink-0 rounded-xl bg-slate-900 px-4 text-sm font-bold text-white cursor-pointer">Add</button></div>
+          </div>
 
-        {/* Amount Input */}
-        <div>
-          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Amount ($)</label>
-          <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" className="w-full h-10 px-3 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all font-medium" required />
-        </div>
+          <Field label="Date of expense"><input type="date" value={date} onChange={(e) => setDate(e.target.value)} max={toDayInput()} className={inputCls} required /></Field>
+          <p className="-mt-2 text-xs font-medium text-slate-400">{fmtDate(date)} · the time you press save is recorded as “entered”.</p>
+          <button type="submit" disabled={busy || !category} className={`${btnPrimary} w-full !h-12 text-base`}>{busy ? 'Saving…' : `Save ${amount ? money(amount) : 'expense'}`}</button>
+        </form>
+      </Card>
 
-        {/* Memo Box */}
-        <div>
-          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Optional Memo / Note</label>
-          <input type="text" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Write a reminder note..." className="w-full h-10 px-3 border border-slate-200 rounded-xl text-sm focus:outline-hidden focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" />
-        </div>
-
-        <button type="submit" className="w-full h-10 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white font-semibold rounded-xl text-sm shadow-sm cursor-pointer mt-2 transition-all">
-          Add to Ledger
-        </button>
-      </form>
+      <div className="lg:col-span-2">
+        <Title icon="clock">Just added</Title>
+        <div className="space-y-2.5">{recent.length ? recent.map((e) => <EntryCard key={e.id} e={e} />) : <p className="rounded-2xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">Entries you add will show up here with their date.</p>}</div>
+      </div>
     </div>
   );
 }

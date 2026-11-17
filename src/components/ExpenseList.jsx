@@ -1,232 +1,129 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { money, matchesSearch, inRange, memberName, fmtDate, fmtDateTime, enteredAt, hasSeparateEntered, toDayInput, toCSV, downloadFile } from '../lib/utils';
+import { Card, Chip, Avatar, EntryCard, Empty, Field, inputCls, btnGhost, btnPrimary } from './ui';
+import Icon from './Icons';
 
-export default function ExpenseList({ rawExpenses, onDeleteExpense, onUpdateExpense, currentUser }) {
-  const [filterType, setFilterType] = useState('all');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('All');
-  const [excludedIds, setExcludedIds] = useState([]);
+const PERIODS = [['all', 'All'], ['week', '7 days'], ['month', '30 days'], ['range', 'Dates']];
 
-  // NEW: State variables to manage the inline admin edit form
-  const [editingId, setEditingId] = useState(null);
-  const [editData, setEditData] = useState({ amount: '', category: '', note: '', date: '' });
+export function EditBox({ item, categories, onSave, onCancel }) {
+  const [d, setD] = useState({ amount: item.amount, category: item.category, note: item.note || '', date: toDayInput(item.created_at) });
+  return (
+    <div className="mt-3 rounded-2xl bg-indigo-50/70 p-4 ring-1 ring-indigo-100">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Date"><input type="date" className={inputCls} value={d.date} onChange={(e) => setD({ ...d, date: e.target.value })} /></Field>
+        <Field label="Category"><input list="cat-edit" className={inputCls} value={d.category} onChange={(e) => setD({ ...d, category: e.target.value })} /><datalist id="cat-edit">{categories.map((c) => <option key={c} value={c} />)}</datalist></Field>
+        <Field label="Amount"><input type="number" step="0.01" className={inputCls} value={d.amount} onChange={(e) => setD({ ...d, amount: e.target.value })} /></Field>
+        <Field label="Note"><input className={inputCls} value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} /></Field>
+      </div>
+      <div className="mt-3 flex gap-2">
+        <button className={`${btnPrimary} !h-10`} onClick={() => onSave({ amount: parseFloat(d.amount), category: d.category.trim(), note: d.note, created_at: d.date === toDayInput(item.created_at) ? item.created_at : new Date(`${d.date}T12:00:00`).toISOString() })}>Save changes</button>
+        <button className={`${btnGhost} !h-10`} onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
 
-  const uniqueCategories = ['All', ...new Set(rawExpenses.map(item => item.category))];
-  const activeCategories = [...new Set(rawExpenses.map(item => item.category))];
+export default function ExpenseList({ rawExpenses, categories, onDeleteExpense, onUpdateExpense, currentUser }) {
+  const isAdmin = currentUser?.role === 'admin';
+  const [q, setQ] = useState('');
+  const [period, setPeriod] = useState('all');
+  const [from, setFrom] = useState(''); const [to, setTo] = useState('');
+  const [cat, setCat] = useState('All'); const [who, setWho] = useState('All');
+  const [order, setOrder] = useState('new');
+  const [skip, setSkip] = useState([]);
+  const [editing, setEditing] = useState(null);
 
-  const itemsMatchingFilter = rawExpenses.filter((item) => {
-    const itemDate = new Date(item.created_at);
-    const now = new Date();
+  const members = useMemo(() => ['All', ...new Set(rawExpenses.map(memberName))], [rawExpenses]);
+  const cats = useMemo(() => ['All', ...new Set(rawExpenses.map((e) => e.category))], [rawExpenses]);
 
-    if (filterType === 'category' && selectedCategory !== 'All' && item.category !== selectedCategory) return false;
-    if (filterType === 'range') {
-      if (startDate && itemDate < new Date(`${startDate}T00:00:00`)) return false;
-      if (endDate && itemDate > new Date(`${endDate}T23:59:59`)) return false;
-    }
-    if (filterType === 'week') return itemDate >= new Date(now.setDate(now.getDate() - 7));
-    if (filterType === 'month') return itemDate >= new Date(now.setDate(now.getDate() - 30));
-    return true;
-  });
+  const rows = useMemo(() => {
+    const now = Date.now();
+    const f = rawExpenses.filter((e) => matchesSearch(e, q) && (cat === 'All' || e.category === cat) && (who === 'All' || memberName(e) === who)
+      && (period === 'week' ? new Date(e.created_at) >= now - 7 * 864e5 : period === 'month' ? new Date(e.created_at) >= now - 30 * 864e5 : period === 'range' ? inRange(e, from, to) : true));
+    let run = 0;
+    const withRun = f.map((e) => { run += skip.includes(e.id) ? 0 : Number(e.amount); return { ...e, running: run }; });
+    return order === 'new' ? withRun.reverse() : withRun;
+  }, [rawExpenses, q, cat, who, period, from, to, skip, order]);
 
-  const toggleExclusion = (id) => {
-    setExcludedIds(prev => prev.includes(id) ? prev.filter(eId => eId !== id) : [...prev, id]);
-  };
+  const total = rows.reduce((s, e) => s + (skip.includes(e.id) ? 0 : Number(e.amount)), 0);
+  const groups = useMemo(() => { const m = new Map(); rows.forEach((e) => { const k = toDayInput(e.created_at); m.set(k, [...(m.get(k) || []), e]); }); return [...m.entries()]; }, [rows]);
+  const toggle = (id) => setSkip((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const filtered = q || cat !== 'All' || who !== 'All' || period !== 'all';
 
-  const handleBulkExcludeCategory = (e) => {
-    if (e.target.value === 'None') return;
-    const ids = itemsMatchingFilter.filter(i => i.category === e.target.value).map(i => i.id);
-    setExcludedIds(prev => [...new Set([...prev, ...ids])]);
-    e.target.value = 'None';
-  };
-
-  // NEW: Open the inline edit tool
-  const startEdit = (item) => {
-    setEditingId(item.id);
-    const itemDate = new Date(item.created_at).toISOString().split('T')[0];
-    setEditData({ amount: item.amount, category: item.category, note: item.note || '', date: itemDate });
-  };
-
-  // NEW: Save the edited data
-  const saveEdit = (id) => {
-    onUpdateExpense(id, {
-      amount: parseFloat(editData.amount),
-      category: editData.category,
-      note: editData.note,
-      created_at: new Date(`${editData.date}T12:00:00Z`).toISOString() // Restore formatted date
-    });
-    setEditingId(null);
-  };
-
-  let currentRunningTotal = 0;
-  let totalExcludedAmount = 0;
-
-  const processedDisplayItems = itemsMatchingFilter.map((item) => {
-    const previousTotal = currentRunningTotal;
-    const amount = parseFloat(item.amount);
-    currentRunningTotal += amount;
-    const isExcluded = excludedIds.includes(item.id);
-    if (isExcluded) totalExcludedAmount += amount;
-
-    const dateObj = new Date(item.created_at);
-    return {
-      ...item,
-      displayDate: `${dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`,
-      lastAmount: previousTotal,
-      totalAmount: currentRunningTotal,
-      isExcluded
-    };
-  });
-
-  const finalAdjustedTotal = currentRunningTotal - totalExcludedAmount;
-  const displayHistoryList = [...processedDisplayItems].reverse();
+  const actions = (e) => (isAdmin ? (
+    <div className="mt-2 flex gap-1.5">
+      <button onClick={() => setEditing(editing === e.id ? null : e.id)} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-indigo-100 hover:text-indigo-700 cursor-pointer"><Icon name="edit" className="h-3.5 w-3.5" />Edit</button>
+      <button onClick={() => { if (window.confirm('Delete this entry?')) onDeleteExpense(e.id); }} className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-rose-100 hover:text-rose-700 cursor-pointer"><Icon name="trash" className="h-3.5 w-3.5" />Delete</button>
+    </div>
+  ) : null);
 
   return (
-    <div className="space-y-6">
-      
-      {/* FILTER CONTROL PANEL */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
-        <div>
-          <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Filter Ledger By:</label>
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-xl text-xs sm:text-sm bg-white font-medium">
-            <option value="all">Full Chronological Statement</option>
-            <option value="week">Past 7 Days Expenses (Weekly)</option>
-            <option value="month">Past 30 Days Expenses (Monthly)</option>
-            <option value="range">Custom Date Range (From → To)</option>
-            <option value="category">Isolate Specific Category Tag</option>
-          </select>
+    <div className="space-y-5">
+      <Card className="space-y-4 !p-4 sm:!p-5">
+        <div className="relative">
+          <Icon name="search" className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search item, category, member, amount or date (e.g. “rice”, “12 Nov”)…" className={`${inputCls} !h-12 !pl-11 !pr-10`} />
+          {q && <button onClick={() => setQ('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 cursor-pointer"><Icon name="x" className="h-4 w-4" /></button>}
         </div>
-        {filterType === 'range' && (
-          <div className="grid grid-cols-2 gap-3">
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-10 px-3 border border-slate-200 rounded-xl text-xs bg-slate-50" />
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-10 px-3 border border-slate-200 rounded-xl text-xs bg-slate-50" />
-          </div>
-        )}
-        {filterType === 'category' && (
-          <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="w-full h-10 px-3 border border-slate-200 rounded-xl text-xs bg-slate-50 font-semibold">
-            {uniqueCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-          </select>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {PERIODS.map(([k, l]) => <button key={k} onClick={() => setPeriod(k)} className={`rounded-full px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${period === k ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/30' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{l}</button>)}
+          <span className="mx-1 hidden h-5 w-px bg-slate-200 sm:block" />
+          <select value={cat} onChange={(e) => setCat(e.target.value)} className="h-9 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600">{cats.map((c) => <option key={c} value={c}>{c === 'All' ? 'All categories' : c}</option>)}</select>
+          <select value={who} onChange={(e) => setWho(e.target.value)} className="h-9 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600">{members.map((c) => <option key={c} value={c}>{c === 'All' ? 'All members' : c}</option>)}</select>
+          <select value={order} onChange={(e) => setOrder(e.target.value)} className="h-9 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600"><option value="new">Newest first</option><option value="old">Oldest first</option></select>
+          {filtered && <button onClick={() => { setQ(''); setPeriod('all'); setCat('All'); setWho('All'); }} className="text-xs font-bold text-rose-500 cursor-pointer">Clear</button>}
+        </div>
+        {period === 'range' && <div className="grid grid-cols-2 gap-3"><Field label="From"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} /></Field><Field label="To"><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={inputCls} /></Field></div>}
+      </Card>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-3xl bg-slate-900 p-5 text-white">
+        <div><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{filtered ? 'Matching total' : 'Total'}</p><p className="text-3xl font-black tabular-nums">{money(total)}</p></div>
+        <div className="flex items-center gap-2 text-xs font-bold"><span className="rounded-full bg-white/10 px-3 py-1.5">{rows.length} {rows.length === 1 ? 'entry' : 'entries'}</span>{skip.length > 0 && <button onClick={() => setSkip([])} className="rounded-full bg-rose-500/20 px-3 py-1.5 text-rose-200 cursor-pointer">{skip.length} unchecked · reset</button>}<button onClick={() => downloadFile(`expenses-${toDayInput()}.csv`, toCSV(rows))} className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 hover:bg-white/20 cursor-pointer"><Icon name="download" className="h-3.5 w-3.5" />CSV</button></div>
       </div>
 
-      {/* ISOLATED VIEW METRIC BOX */}
-      <div className="bg-indigo-900 text-white rounded-2xl p-5 flex flex-col gap-4 shadow-xs">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-[10px] text-indigo-200 font-bold uppercase tracking-wider">Calculated Total</p>
-            <div className="flex items-baseline gap-2 mt-0.5">
-              <p className="text-3xl font-black">${finalAdjustedTotal.toFixed(2)}</p>
-              {totalExcludedAmount > 0 && <p className="text-sm font-semibold text-indigo-300 line-through">${currentRunningTotal.toFixed(2)}</p>}
-            </div>
+      {rows.length === 0 ? <Empty>{filtered ? 'Nothing matches your search. Try fewer words or clear the filters.' : 'No entries in the ledger yet.'}</Empty> : (
+        <>
+          {/* Mobile / tablet: cards grouped by day */}
+          <div className="space-y-5 lg:hidden">
+            {groups.map(([day, list]) => (
+              <div key={day}>
+                <div className="mb-2 flex items-center justify-between px-1"><p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">{fmtDate(day + 'T12:00:00')}</p><p className="text-xs font-bold tabular-nums text-slate-400">{money(list.reduce((s, e) => s + Number(e.amount), 0))}</p></div>
+                <div className="space-y-2.5">{list.map((e) => (
+                  <div key={e.id} className={skip.includes(e.id) ? 'opacity-50' : ''}>
+                    <EntryCard e={e} running={e.running} actions={<div className="flex items-center justify-between"><label className="mt-2 inline-flex items-center gap-2 text-xs font-semibold text-slate-400"><input type="checkbox" checked={!skip.includes(e.id)} onChange={() => toggle(e.id)} className="h-4 w-4 rounded accent-indigo-600" />Count in total</label>{actions(e)}</div>} />
+                    {editing === e.id && <EditBox item={e} categories={categories} onCancel={() => setEditing(null)} onSave={(p) => { onUpdateExpense(e.id, p); setEditing(null); }} />}
+                  </div>))}</div>
+              </div>
+            ))}
           </div>
-          <span className="text-xs bg-white/10 px-3 py-1 rounded-full border border-white/10 font-medium mt-1">{displayHistoryList.length} rows</span>
-        </div>
-        <div className="bg-black/20 p-3 rounded-xl border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <label className="text-[10px] font-bold text-indigo-200 uppercase tracking-wider">Bulk Uncheck:</label>
-            <select defaultValue="None" onChange={handleBulkExcludeCategory} className="w-40 h-8 px-2 bg-indigo-950 border border-indigo-500/30 rounded-lg text-xs font-bold text-white">
-              <option value="None">Select Category...</option>
-              {activeCategories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-            </select>
-          </div>
-          {totalExcludedAmount > 0 && (
-            <div className="flex items-center gap-3">
-              <span className="text-xs font-black text-rose-300 bg-rose-500/20 px-2 py-1.5 rounded-md">Excluded: ${totalExcludedAmount.toFixed(2)}</span>
-              <button onClick={() => setExcludedIds([])} className="text-[10px] bg-white/10 hover:bg-white/20 text-white font-bold px-2 py-1.5 rounded-md">Reset All</button>
-            </div>
-          )}
-        </div>
-      </div>
 
-      {/* DATA STATEMENT LIST MATRIX */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[750px]">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                <th className="px-4 py-3 text-center w-16">Include</th>
-                <th className="px-5 py-3">Member</th>
-                <th className="px-5 py-3">Date</th>
-                <th className="px-5 py-3">Category / Memo</th>
-                <th className="px-5 py-3 text-right">Added Cost</th>
-                <th className="px-5 py-3 text-right">Running Bal</th>
-                {currentUser?.role === 'admin' && <th className="px-5 py-3 text-center">Manage</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 text-xs sm:text-sm text-slate-600">
-              {displayHistoryList.map((item) => (
-                editingId === item.id ? (
-                  // INLINE EDIT FORM FOR ADMINS
-                  <tr key={`edit-${item.id}`} className="bg-indigo-50/60 border-y border-indigo-100">
-                    <td colSpan={currentUser?.role === 'admin' ? "7" : "6"} className="px-5 py-4">
-                      <div className="flex flex-wrap items-end gap-3">
-                        <div className="flex-1 min-w-[120px]">
-                          <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Date</label>
-                          <input type="date" value={editData.date} onChange={e => setEditData({...editData, date: e.target.value})} className="w-full h-8 px-2 border border-indigo-200 rounded-lg text-xs font-semibold text-slate-800" />
-                        </div>
-                        <div className="flex-1 min-w-[120px]">
-                          <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Category</label>
-                          <input type="text" value={editData.category} onChange={e => setEditData({...editData, category: e.target.value})} className="w-full h-8 px-2 border border-indigo-200 rounded-lg text-xs font-semibold text-slate-800" />
-                        </div>
-                        <div className="flex-1 min-w-[100px]">
-                          <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Amount ($)</label>
-                          <input type="number" step="0.01" value={editData.amount} onChange={e => setEditData({...editData, amount: e.target.value})} className="w-full h-8 px-2 border border-indigo-200 rounded-lg text-xs font-semibold text-slate-800" />
-                        </div>
-                        <div className="flex-2 min-w-[150px]">
-                          <label className="block text-[10px] font-bold text-indigo-400 uppercase mb-1">Note / Memo</label>
-                          <input type="text" value={editData.note} onChange={e => setEditData({...editData, note: e.target.value})} className="w-full h-8 px-2 border border-indigo-200 rounded-lg text-xs font-semibold text-slate-800" />
-                        </div>
-                        <div className="flex gap-2 w-full sm:w-auto mt-2 sm:mt-0">
-                          <button onClick={() => saveEdit(item.id)} className="flex-1 sm:flex-none bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition-colors shadow-sm">Save</button>
-                          <button onClick={() => setEditingId(null)} className="flex-1 sm:flex-none bg-white border border-slate-300 text-slate-700 hover:bg-slate-50 px-4 py-1.5 rounded-lg text-xs font-bold transition-colors">Cancel</button>
-                        </div>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  // STANDARD ROW VIEW
-                  <tr key={item.id} className={`transition-colors ${item.isExcluded ? 'bg-slate-50/80 opacity-60 grayscale-[50%]' : 'hover:bg-slate-50/40'}`}>
-                    <td className="px-4 py-3.5 text-center">
-                      <input type="checkbox" checked={!item.isExcluded} onChange={() => toggleExclusion(item.id)} className="w-4 h-4 text-indigo-600 rounded-sm border-slate-300 focus:ring-indigo-500 cursor-pointer" />
-                    </td>
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-2">
-                        {item.profiles?.avatar_url ? (
-                          <img src={item.profiles.avatar_url} alt="User" className="w-6 h-6 rounded-full bg-slate-200 border border-slate-300" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-500">?</div>
-                        )}
-                        <span className="font-bold text-slate-700 whitespace-nowrap">{item.profiles?.full_name || 'Unknown'}</span>
-                      </div>
-                    </td>
-                    <td className="px-5 py-3.5 whitespace-nowrap text-slate-400 font-medium">{item.displayDate}</td>
-                    <td className="px-5 py-3.5 font-bold text-slate-800">
-                      <div className="flex flex-col">
-                        <span className={item.isExcluded ? 'line-through decoration-slate-400/50' : ''}>{item.category}</span>
-                        {item.note && <span className="text-[10px] text-red-600 font-medium mt-0.5">⚠️ {item.note}</span>}
-                      </div>
-                    </td>
-                    <td className={`px-5 py-3.5 text-right font-black ${item.isExcluded ? 'text-slate-400 line-through' : 'text-slate-900'}`}>+${parseFloat(item.amount).toFixed(2)}</td>
-                    <td className="px-5 py-3.5 text-right font-black text-indigo-600 bg-indigo-50/10">${item.totalAmount.toFixed(2)}</td>
-                    
-                    {/* NEW: Admin Edit & Delete Actions */}
-                    {currentUser?.role === 'admin' && (
-                      <td className="px-5 py-3.5 text-center whitespace-nowrap">
-                        <button onClick={() => startEdit(item)} className="text-slate-400 hover:text-indigo-600 transition-colors px-1.5 py-1 cursor-pointer font-bold text-sm" title="Edit Entry">✏️</button>
-                        <button onClick={() => onDeleteExpense(item.id)} className="text-slate-400 hover:text-red-600 transition-colors px-1.5 py-1 cursor-pointer font-bold text-sm" title="Delete Entry">✕</button>
-                      </td>
-                    )}
-                  </tr>
-                )
-              ))}
-              {displayHistoryList.length === 0 && (
-                <tr>
-                  <td colSpan={currentUser?.role === 'admin' ? "7" : "6"} className="text-center py-12 text-slate-400 font-medium">No matching ledger records exist for this filter setup scope.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+          {/* Desktop: full table with both dates */}
+          <div className="hidden overflow-hidden rounded-3xl border border-slate-200/70 bg-white shadow-sm lg:block">
+            <table className="w-full border-collapse text-left">
+              <thead><tr className="border-b border-slate-100 bg-slate-50/70 text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                <th className="w-12 px-4 py-3.5" /><th className="px-4 py-3.5">Date of expense</th><th className="px-4 py-3.5">Entered at</th><th className="px-4 py-3.5">Member</th><th className="px-4 py-3.5">Category / note</th><th className="px-4 py-3.5 text-right">Amount</th><th className="px-4 py-3.5 text-right">Running</th>{isAdmin && <th className="w-24 px-4 py-3.5" />}
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100 text-sm">
+                {rows.map((e) => (
+                  <React.Fragment key={e.id}>
+                    <tr className={`transition hover:bg-slate-50/60 ${skip.includes(e.id) ? 'opacity-45' : ''}`}>
+                      <td className="px-4 py-3.5 text-center"><input type="checkbox" checked={!skip.includes(e.id)} onChange={() => toggle(e.id)} className="h-4 w-4 rounded accent-indigo-600" title="Count in total" /></td>
+                      <td className="whitespace-nowrap px-4 py-3.5 font-semibold text-slate-800">{fmtDate(e.created_at)}</td>
+                      <td className="whitespace-nowrap px-4 py-3.5 text-xs font-medium text-slate-400">{hasSeparateEntered(e) ? fmtDateTime(enteredAt(e)) : `${fmtDateTime(enteredAt(e))}`}</td>
+                      <td className="px-4 py-3.5"><span className="flex items-center gap-2 font-semibold text-slate-600"><Avatar e={e} size="h-7 w-7" />{memberName(e)}</span></td>
+                      <td className="px-4 py-3.5"><Chip category={e.category} />{e.note && <span className="ml-2 text-slate-500">{e.note}</span>}</td>
+                      <td className="px-4 py-3.5 text-right font-extrabold tabular-nums text-slate-900">{money(e.amount)}</td>
+                      <td className="px-4 py-3.5 text-right text-xs font-bold tabular-nums text-indigo-500">{money(e.running)}</td>
+                      {isAdmin && <td className="px-4 py-3.5"><div className="flex justify-end gap-1"><button onClick={() => setEditing(editing === e.id ? null : e.id)} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 cursor-pointer" title="Edit"><Icon name="edit" className="h-4 w-4" /></button><button onClick={() => { if (window.confirm('Delete this entry?')) onDeleteExpense(e.id); }} className="grid h-8 w-8 place-items-center rounded-lg text-slate-400 hover:bg-rose-50 hover:text-rose-600 cursor-pointer" title="Delete"><Icon name="trash" className="h-4 w-4" /></button></div></td>}
+                    </tr>
+                    {editing === e.id && <tr><td colSpan={8} className="bg-slate-50/50 px-4 pb-4"><EditBox item={e} categories={categories} onCancel={() => setEditing(null)} onSave={(p) => { onUpdateExpense(e.id, p); setEditing(null); }} /></td></tr>}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

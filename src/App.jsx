@@ -1,14 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from './supabaseClient';
+import { collectCategories, noteCategoryMap, fmtDateShort } from './lib/utils';
 import Navbar from './components/Navbar';
-import Hero from './components/Hero';
+import Dashboard from './components/Dashboard';
 import ExpenseForm from './components/ExpenseForm';
 import ExpenseList from './components/ExpenseList';
 import ArchiveList from './components/ArchiveList';
 import Toast from './components/Toast';
 import Auth from './components/Auth';
 import AdminPanel from './components/AdminPanel';
-import CategorySummary from './components/CategorySummary';
+
+const DEFAULT_BUDGET = 4500;
+const loadSaved = () => { try { return JSON.parse(localStorage.getItem('expensely_cats') || '[]'); } catch { return []; } };
 
 export default function App() {
   const [session, setSession] = useState(null);
@@ -16,238 +19,140 @@ export default function App() {
   const [recoveryMode, setRecoveryMode] = useState(false);
   const [expenses, setExpenses] = useState([]);
   const [archives, setArchives] = useState([]);
+  const [budget, setBudget] = useState(DEFAULT_BUDGET);
+  // Which optional database upgrades are in place (see supabase/migration.sql)
+  const [caps, setCaps] = useState({ settings: false, entries: false, entered: false, checked: false });
+  const [savedCats, setSavedCats] = useState(loadSaved);
   const [currentView, setCurrentView] = useState(() => localStorage.getItem('expensely_view') || 'home');
-  
   const [loading, setLoading] = useState(true);
   const [toast, setToast] = useState(null);
-  const budget = 4500;
 
-  // Persist view state
-  useEffect(() => {
-    localStorage.setItem('expensely_view', currentView);
-  }, [currentView]);
+  const isAdmin = currentUser?.role === 'admin';
+  const showToast = (message, type = 'success') => setToast({ message, type, id: Date.now() });
 
-  // Handle Authentication & Session Setup
+  useEffect(() => { localStorage.setItem('expensely_view', currentView); }, [currentView]);
+  useEffect(() => { if (currentView === 'admin' && currentUser && !isAdmin) setCurrentView('home'); }, [currentView, currentUser, isAdmin]);
+
+  /* ---------- auth ---------- */
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session) fetchUserProfile(session.user.id);
-      else setLoading(false);
+      if (session) fetchUserProfile(session.user.id); else setLoading(false);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       setSession(session);
-      if (session) {
-        fetchUserProfile(session.user.id);
-      } else {
-        setCurrentUser(null);
-        setExpenses([]);
-        setLoading(false);
-      }
+      if (session) fetchUserProfile(session.user.id);
+      else { setCurrentUser(null); setExpenses([]); setLoading(false); }
     });
-
     return () => subscription.unsubscribe();
   }, []);
-
-  // Fetch initial data once logged in
-  useEffect(() => {
-    if (session) {
-      fetchExpenses();
-      fetchArchives();
-    }
-  }, [session]);
 
   const fetchUserProfile = async (userId) => {
     const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
     if (!error && data) setCurrentUser(data);
-    setLoading(false);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setCurrentView('home');
-  };
+  /* ---------- data ---------- */
+  const checkCaps = useCallback(async () => {
+    const test = async (table, cols) => !(await supabase.from(table).select(cols).limit(1)).error;
+    const [settings, entries, entered] = await Promise.all([test('app_settings', 'key'), test('expense_archives', 'entries'), test('expenses', 'entered_at')]);
+    setCaps({ settings, entries, entered, checked: true });
+    if (settings) {
+      const { data } = await supabase.from('app_settings').select('value').eq('key', 'monthly_budget').maybeSingle();
+      const v = Number(data?.value); if (Number.isFinite(v) && v > 0) setBudget(v);
+    }
+  }, []);
 
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type });
-  };
-
-  const fetchExpenses = async () => {
-    setLoading(true);
-    // Join query to grab the user profile data connected to the expense
-    const { data, error } = await supabase
-      .from('expenses')
-      .select('*, profiles(full_name, avatar_url)')
-      .order('created_at', { ascending: true });
-      
+  const fetchExpenses = useCallback(async () => {
+    const { data, error } = await supabase.from('expenses').select('*, profiles(full_name, avatar_url)').order('created_at', { ascending: true });
     if (!error && data) setExpenses(data);
-    setLoading(false);
-  };
-
-  const fetchArchives = async () => {
+  }, []);
+  const fetchArchives = useCallback(async () => {
     const { data, error } = await supabase.from('expense_archives').select('*').order('archived_at', { ascending: false });
     if (!error && data) setArchives(data);
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    setLoading(true);
+    Promise.all([checkCaps(), fetchExpenses(), fetchArchives()]).finally(() => setLoading(false));
+  }, [session, checkCaps, fetchExpenses, fetchArchives]);
+
+  /* ---------- derived ---------- */
+  const categories = useMemo(() => collectCategories(expenses, archives, savedCats), [expenses, archives, savedCats]);
+  const noteMap = useMemo(() => noteCategoryMap(expenses, archives), [expenses, archives]);
+  const totalSpent = useMemo(() => expenses.reduce((s, e) => s + Number(e.amount), 0), [expenses]);
+
+  const rememberCategory = (cat) => {
+    const next = [...new Set([cat, ...savedCats])].slice(0, 60);
+    setSavedCats(next); localStorage.setItem('expensely_cats', JSON.stringify(next));
   };
 
-  const handleAddExpense = async (newEntry) => {
-    // If user picks today, use accurate current ISO timestamp. 
-    // If they picked a past date, parse it with noon UTC so it registers cleanly.
-    const todayStr = new Date().toISOString().split('T')[0];
-    const finalDate = newEntry.date === todayStr 
-      ? new Date().toISOString() 
-      : new Date(`${newEntry.date}T12:00:00Z`).toISOString();
-
-    const entryWithUser = { 
-      category: newEntry.category,
-      amount: newEntry.amount,
-      note: newEntry.note,
-      created_at: finalDate, // Appends the new generated date
-      user_id: session.user.id 
-    };
-    const { error } = await supabase.from('expenses').insert([entryWithUser]);
-    if (!error) {
-      showToast('Transaction posted to cloud ledger!');
-      fetchExpenses();
-    } else {
-      showToast('Error uploading ledger entry', 'error');
-    }
+  /* ---------- actions ---------- */
+  const handleAddExpense = async (entry) => {
+    const today = new Date().toISOString().split('T')[0];
+    const created_at = entry.date === today ? new Date().toISOString() : new Date(`${entry.date}T12:00:00`).toISOString();
+    const { error } = await supabase.from('expenses').insert([{ category: entry.category, amount: entry.amount, note: entry.note, created_at, user_id: session.user.id }]);
+    if (error) { showToast('Could not save the entry', 'error'); return false; }
+    rememberCategory(entry.category);
+    showToast('Entry saved'); fetchExpenses(); return true;
   };
-  const handleUpdateExpense = async (id, updatedEntry) => {
-    const { error } = await supabase.from('expenses').update(updatedEntry).eq('id', id);
-    if (!error) {
-      showToast('Ledger entry successfully updated!');
-      fetchExpenses();
-    } else {
-      showToast('Error updating entry', 'error');
-    }
+  const handleUpdateExpense = async (id, patch) => {
+    const { error } = await supabase.from('expenses').update(patch).eq('id', id);
+    if (error) showToast('Could not update the entry', 'error'); else { showToast('Entry updated'); fetchExpenses(); }
   };
   const handleDeleteExpense = async (id) => {
     const { error } = await supabase.from('expenses').delete().eq('id', id);
-    if (!error) {
-      showToast('Entry removed from statement logs.');
-      fetchExpenses();
-    }
+    if (error) showToast('Could not delete the entry', 'error'); else { showToast('Entry deleted'); fetchExpenses(); }
+  };
+
+  const handleSaveBudget = async (value) => {
+    if (!caps.settings) { showToast('Run the one-time database setup first (Admin → Setup)', 'error'); return false; }
+    const { error } = await supabase.from('app_settings').upsert({ key: 'monthly_budget', value: Number(value), updated_at: new Date().toISOString(), updated_by: session.user.id });
+    if (error) { showToast('Only admins can change the budget', 'error'); return false; }
+    setBudget(Number(value)); showToast('Budget updated for everyone'); return true;
   };
 
   const handleArchiveMonth = async () => {
-    if (expenses.length === 0) {
-      showToast('Cannot archive an empty current ledger layout.', 'error');
-      return;
-    }
-
-    const dateObjects = expenses.map(item => new Date(item.created_at));
-    const minDate = new Date(Math.min(...dateObjects)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-    const maxDate = new Date(Math.max(...dateObjects)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-    const totalSpent = expenses.reduce((sum, item) => sum + parseFloat(item.amount), 0);
-    const savingsLoss = budget - totalSpent;
-
+    if (!expenses.length) { showToast('There is nothing to archive yet', 'error'); return; }
+    if (!caps.entries) { showToast('Run the one-time database setup first, so archived entries keep their dates (Admin → Setup)', 'error'); return; }
+    const times = expenses.map((e) => new Date(e.created_at));
     const breakdowns = {};
-    expenses.forEach((item) => {
-      breakdowns[item.category] = (breakdowns[item.category] || 0) + parseFloat(item.amount);
-    });
-
-    const currentMonthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-
-    const { error: archiveError } = await supabase.from('expense_archives').insert([{
-      month_label: currentMonthLabel,
-      total_budget: budget,
-      total_expense: totalSpent,
-      net_savings_loss: savingsLoss,
-      category_breakdowns: breakdowns,
-      date_from: minDate,
-      date_to: maxDate
+    expenses.forEach((e) => { breakdowns[e.category] = (breakdowns[e.category] || 0) + Number(e.amount); });
+    const entries = expenses.map((e) => ({ id: e.id, created_at: e.created_at, entered_at: e.entered_at || null, category: e.category, amount: Number(e.amount), note: e.note || '', user_id: e.user_id, member: e.profiles?.full_name || 'Unknown' }));
+    const label = new Date(Math.max(...times)).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    const { error: aErr } = await supabase.from('expense_archives').insert([{
+      month_label: label, total_budget: budget, total_expense: totalSpent, net_savings_loss: budget - totalSpent,
+      category_breakdowns: breakdowns, date_from: fmtDateShort(new Date(Math.min(...times))), date_to: fmtDateShort(new Date(Math.max(...times))), entries,
     }]);
-
-    if (archiveError) {
-      showToast('Failed to compile summary database report.', 'error');
-      return;
-    }
-
-    const { error: deleteError } = await supabase.from('expenses').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-
-    if (!deleteError) {
-      showToast(`${currentMonthLabel} closed out and archived safely!`);
-      setExpenses([]);
-      fetchArchives();
-      setCurrentView('archives');
-    }
+    if (aErr) { showToast('Could not save the archive — nothing was deleted', 'error'); return; }
+    const { error: dErr } = await supabase.from('expenses').delete().in('id', expenses.map((e) => e.id));
+    if (dErr) { showToast('Archive saved, but the old entries could not be cleared', 'error'); fetchArchives(); return; }
+    showToast(`${label} archived with every entry`); setExpenses([]); fetchArchives(); setCurrentView('archives');
   };
 
-  const currentTotalSpent = expenses.reduce((sum, item) => sum + parseFloat(item.amount), 0);
-
-  // If not authenticated, render the Auth screen
- if (!session || recoveryMode) {
-    return (
-      <Auth 
-        onAuthSuccess={() => {}} 
-        enterRecovery={() => setRecoveryMode(true)}
-        exitRecovery={() => setRecoveryMode(false)}
-      />
-    ); 
+  if (!session || recoveryMode) {
+    return <Auth onAuthSuccess={() => {}} enterRecovery={() => setRecoveryMode(true)} exitRecovery={() => setRecoveryMode(false)} />;
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 antialiased pb-12 relative">
-      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-      
-      <Navbar 
-        currentView={currentView} 
-        setCurrentView={setCurrentView} 
-        currentUser={currentUser}
-        onLogout={handleLogout}
-      />
-      
-      <main className="max-w-5xl mx-auto px-4 py-6 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-slate-50 text-slate-800 antialiased">
+      <div className="pointer-events-none fixed inset-x-0 top-0 -z-0 h-72 bg-gradient-to-b from-indigo-100/70 via-violet-50/40 to-transparent" />
+      {toast && <Toast key={toast.id} message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <Navbar currentView={currentView} setCurrentView={setCurrentView} currentUser={currentUser} onLogout={async () => { await supabase.auth.signOut(); setCurrentView('home'); }} />
+      <main className="relative mx-auto w-full max-w-6xl px-4 pb-28 pt-5 sm:px-6 lg:px-8 lg:pb-12">
         {loading ? (
-          <div className="text-center py-12 text-sm text-slate-400 font-semibold">Syncing database data...</div>
+          <div className="grid place-items-center py-24 text-sm font-semibold text-slate-400"><span className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />Loading your ledger…</div>
         ) : (
-          <div className="space-y-6">
-          
-              
-             
-                
-               {currentView === 'home' && (
-              <>
-                <Hero totalExpenses={currentTotalSpent} budget={budget} />
-                
-                {/* NEW CATEGORY SUMMARY COMPONENT */}
-                <CategorySummary expenses={expenses} />
-                
-                {/* Only Admin can archive the month */}
-                {currentUser?.role === 'admin' && (
-                  <div className="flex justify-end">
-                    <button 
-                      onClick={handleArchiveMonth}
-                      className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs sm:text-sm active:scale-95 transition-all shadow-md cursor-pointer flex items-center gap-2"
-                    >
-                      📦 Close & Archive Current Month
-                    </button>
-                  </div>
-                )}
-              </>
+          <>
+            {currentView === 'home' && <Dashboard expenses={expenses} budget={budget} isAdmin={isAdmin} onArchive={handleArchiveMonth} goTo={setCurrentView} caps={caps} />}
+            {currentView === 'add' && <ExpenseForm onAddExpense={handleAddExpense} categories={categories} noteMap={noteMap} recent={expenses.slice(-5).reverse()} />}
+            {currentView === 'history' && <ExpenseList rawExpenses={expenses} categories={categories} onDeleteExpense={handleDeleteExpense} onUpdateExpense={handleUpdateExpense} currentUser={currentUser} />}
+            {currentView === 'archives' && <ArchiveList archives={archives} />}
+            {currentView === 'admin' && isAdmin && (
+              <AdminPanel expenses={expenses} archives={archives} budget={budget} caps={caps} onSaveBudget={handleSaveBudget} onArchive={handleArchiveMonth} onUpdateExpense={handleUpdateExpense} onDeleteExpense={handleDeleteExpense} categories={categories} showToast={showToast} recheck={checkCaps} />
             )}
-              
-            {currentView === 'add' && (
-              <div className="max-w-md mx-auto">
-                <ExpenseForm onAddExpense={handleAddExpense} />
-              </div>
-            )}
-           {currentView === 'history' && (
-              <ExpenseList 
-                rawExpenses={expenses} 
-                onDeleteExpense={handleDeleteExpense}
-                onUpdateExpense={handleUpdateExpense} // <-- Add this!
-                currentUser={currentUser} 
-              />
-            )}
-            {currentView === 'archives' && (
-              <ArchiveList archives={archives} />
-            )}
-            {currentView === 'admin' && currentUser?.role === 'admin' && (
-              <AdminPanel />
-            )}
-          </div>
+          </>
         )}
       </main>
     </div>
