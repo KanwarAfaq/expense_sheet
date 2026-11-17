@@ -2,6 +2,6 @@
   "appId": "com.kanwar.expensely",
   "appName": "Expensely",
   "webDir": "dist",
-  "server": { "url": "https://expense-sheet.vercel.app", "cleartext": false, "androidScheme": "https" },
+  "server": { "url": "https://expense-sheet-kmafaq.vercel.app", "cleartext": false, "androidScheme": "https" },
   "android": { "allowMixedContent": false }
 }
