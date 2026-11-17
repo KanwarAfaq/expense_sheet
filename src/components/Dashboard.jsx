@@ -5,7 +5,7 @@ import Icon from './Icons';
 
 const PERIODS = [['month', '30 days'], ['week', '7 days'], ['all', 'All'], ['range', 'Custom']];
 
-export default function Dashboard({ expenses, budget, isAdmin, onArchive, goTo, caps }) {
+export default function Dashboard({ expenses, budget, isAdmin, onArchive, goTo, caps, limits = {} }) {
   const [period, setPeriod] = useState('all');
   const [from, setFrom] = useState(''); const [to, setTo] = useState('');
   const spent = useMemo(() => expenses.reduce((s, e) => s + Number(e.amount), 0), [expenses]);
@@ -59,7 +59,7 @@ export default function Dashboard({ expenses, budget, isAdmin, onArchive, goTo, 
           {period === 'range' && <div className="mb-4 grid grid-cols-2 gap-3"><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className={inputCls} /></div>}
           {byCat.length === 0 ? <Empty icon="chart">No spending in this period.</Empty> : (
             <ul className="space-y-3.5">{byCat.map(({ c, a, n }) => (
-              <li key={c}><div className="mb-1.5 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><Chip category={c} /><span className="text-xs font-semibold text-slate-400">{n} {n === 1 ? 'entry' : 'entries'}</span></span><span className="text-sm font-extrabold tabular-nums text-slate-900">{money(a)}</span></div>
+              <li key={c}><div className="mb-1.5 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><Chip category={c} /><span className="text-xs font-semibold text-slate-400">{n} {n === 1 ? 'entry' : 'entries'}</span></span><span className={`text-sm font-extrabold tabular-nums ${limits[c] && a > limits[c] ? 'text-rose-600' : 'text-slate-900'}`}>{money(a)}{limits[c] ? <span className="text-xs font-semibold text-slate-400"> / {money(limits[c])}</span> : null}</span></div>
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${tone(c)[1]} transition-all duration-500`} style={{ width: `${(a / catTotal) * 100}%` }} /></div></li>
             ))}</ul>
           )}

@@ -1,32 +1,71 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import setupSql from '../../supabase/migration.sql?raw';
-import { money, memberName, monthKey, monthLabel } from '../lib/utils';
+import { money, memberName, toCSV, downloadFile, toDayInput } from '../lib/utils';
 import { Card, Title, Field, inputCls, btnPrimary, btnGhost } from './ui';
 import ExpenseList from './ExpenseList';
 import Icon from './Icons';
 
-const TABS = [['overview', 'Overview', 'chart'], ['budget', 'Budget', 'wallet'], ['entries', 'All entries', 'list'], ['members', 'Members', 'user'], ['setup', 'Setup', 'db']];
+const TABS = [['overview', 'Overview', 'chart'], ['entries', 'Entries', 'list'], ['members', 'Members', 'user'], ['settings', 'Settings', 'sparkle']];
 
-function Bars({ rows, total }) {
-  return <div className="space-y-3">{rows.map(([k, v]) => (
-    <div key={k}><div className="mb-1 flex justify-between text-sm font-bold"><span className="text-slate-600">{k}</span><span className="tabular-nums text-slate-900">{money(v)}</span></div>
-      <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${total ? (v / total) * 100 : 0}%` }} /></div></div>))}</div>;
+const Stat = ({ label, value, sub, tone = 'text-slate-900' }) => (
+  <Card className="!p-4"><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</p><p className={`text-2xl font-black tabular-nums ${tone}`}>{value}</p>{sub && <p className="mt-0.5 text-xs font-semibold text-slate-400">{sub}</p>}</Card>
+);
+
+function Bars({ rows, total, limits = {} }) {
+  if (!rows.length) return <p className="text-sm text-slate-400">No entries yet.</p>;
+  return (
+    <div className="space-y-3.5">{rows.map(([k, v]) => {
+      const lim = limits[k]; const over = lim && v > lim; const base = lim || total;
+      return (
+        <div key={k}>
+          <div className="mb-1 flex justify-between text-sm font-bold"><span className="text-slate-600">{k}</span>
+            <span className={`tabular-nums ${over ? 'text-rose-600' : 'text-slate-900'}`}>{money(v)}{lim ? <span className="text-xs font-semibold text-slate-400"> / {money(lim)}</span> : null}</span></div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${over ? 'bg-rose-500' : 'bg-gradient-to-r from-indigo-500 to-violet-500'}`} style={{ width: `${base ? Math.min(100, (v / base) * 100) : 0}%` }} /></div>
+        </div>);
+    })}</div>
+  );
 }
 
-export default function AdminPanel({ expenses, archives, budget, caps, onSaveBudget, onArchive, onUpdateExpense, onDeleteExpense, categories, showToast, recheck }) {
+function Trend({ points, budget }) {
+  const max = Math.max(budget, ...points.map((p) => p.v), 1);
+  return (
+    <div className="flex h-40 items-end gap-2 sm:gap-3">
+      {points.map((p) => (
+        <div key={p.k} className="flex flex-1 flex-col items-center gap-1.5">
+          <span className="text-[10px] font-bold tabular-nums text-slate-400">{money(p.v)}</span>
+          <div className="relative flex h-24 w-full items-end overflow-hidden rounded-xl bg-slate-100">
+            <div className={`w-full rounded-xl ${p.now ? 'bg-gradient-to-t from-indigo-500 to-violet-400' : p.v > p.budget ? 'bg-rose-400' : 'bg-indigo-300'}`} style={{ height: `${(p.v / max) * 100}%` }} />
+            <span className="absolute inset-x-0 border-t border-dashed border-slate-400/70" style={{ bottom: `${(budget / max) * 100}%` }} />
+          </div>
+          <span className="text-[10px] font-bold text-slate-500">{p.k}</span>
+        </div>))}
+    </div>
+  );
+}
+
+export default function AdminPanel({ expenses, archives, budget, caps, limits, onSaveBudget, onSaveLimits, onRenameCategory, onArchive, onUpdateExpense, onDeleteExpense, categories, showToast, recheck }) {
   const [tab, setTab] = useState('overview');
   const [users, setUsers] = useState([]);
   const [newBudget, setNewBudget] = useState(budget);
+  const [draft, setDraft] = useState(limits || {});
+  const [renaming, setRenaming] = useState(null);
+  const [newName, setNewName] = useState('');
+  const [showSql, setShowSql] = useState(false);
   useEffect(() => setNewBudget(budget), [budget]);
+  useEffect(() => setDraft(limits || {}), [limits]);
   const loadUsers = async () => { const { data } = await supabase.from('profiles').select('*'); if (data) setUsers(data); };
   useEffect(() => { loadUsers(); }, []);
 
   const total = expenses.reduce((s, e) => s + Number(e.amount), 0);
-  const by = (fn) => Object.entries(expenses.reduce((m, e) => { const k = fn(e); m[k] = (m[k] || 0) + Number(e.amount); return m; }, {})).sort((a, b) => b[1] - a[1]);
-  const byMember = useMemo(() => by(memberName), [expenses]); // eslint-disable-line
-  const byCat = useMemo(() => by((e) => e.category), [expenses]); // eslint-disable-line
-  const byMonth = useMemo(() => by((e) => monthLabel(monthKey(e.created_at))), [expenses]); // eslint-disable-line
+  const now = new Date();
+  const dayOfMonth = now.getDate(); const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  const projected = total / dayOfMonth * daysInMonth;
+  const group = (fn) => Object.entries(expenses.reduce((m, e) => { const k = fn(e); m[k] = (m[k] || 0) + Number(e.amount); return m; }, {})).sort((a, b) => b[1] - a[1]);
+  const byMember = useMemo(() => group(memberName), [expenses]); // eslint-disable-line
+  const byCat = useMemo(() => group((e) => e.category), [expenses]); // eslint-disable-line
+  const trend = useMemo(() => [...archives].reverse().slice(-5).map((a) => ({ k: (a.month_label || '').split(' ')[0].slice(0, 3), v: Number(a.total_expense), budget: Number(a.total_budget) })).concat([{ k: 'Now', v: total, budget, now: true }]), [archives, total, budget]);
+  const allOk = caps.settings && caps.entries && caps.entered;
 
   const setRole = async (u, role) => {
     if (role === 'member' && users.filter((x) => x.role === 'admin').length <= 1) return showToast('Keep at least one admin', 'error');
@@ -34,58 +73,83 @@ export default function AdminPanel({ expenses, archives, budget, caps, onSaveBud
     if (error) return showToast('Could not change role', 'error');
     showToast(`${u.full_name || 'Member'} is now ${role}`); loadUsers();
   };
+  const exportArchives = () => {
+    const rows = archives.flatMap((a) => (a.entries || []).map((e) => ({ ...e, month: a.month_label })));
+    if (!rows.length) return showToast('No archived entry details to export yet', 'error');
+    downloadFile(`archives-${toDayInput()}.csv`, toCSV(rows));
+  };
 
   return (
     <div className="space-y-5">
       <div className="flex gap-1.5 overflow-x-auto rounded-2xl bg-slate-100 p-1.5">
-        {TABS.map(([k, l, i]) => <button key={k} onClick={() => setTab(k)} className={`flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition cursor-pointer ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}><Icon name={i} className="h-4 w-4" />{l}</button>)}
+        {TABS.map(([k, l, i]) => <button key={k} onClick={() => setTab(k)} className={`flex flex-1 shrink-0 items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition cursor-pointer ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}><Icon name={i} className="h-4 w-4" />{l}</button>)}
       </div>
 
       {tab === 'overview' && (
         <div className="space-y-5">
-          <div className="grid gap-3 sm:grid-cols-4">
-            {[['Budget', money(budget)], ['Spent now', money(total)], ['Left', money(budget - total)], ['Entries', expenses.length]].map(([l, v]) => <Card key={l} className="!p-4"><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{l}</p><p className="text-2xl font-black tabular-nums text-slate-900">{v}</p></Card>)}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Spent" value={money(total)} sub={`${expenses.length} entries`} />
+            <Stat label={budget - total >= 0 ? 'Left' : 'Over budget'} value={money(Math.abs(budget - total))} sub={`of ${money(budget)}`} tone={budget - total >= 0 ? 'text-emerald-600' : 'text-rose-600'} />
+            <Stat label="Daily average" value={money(total / dayOfMonth)} sub={`day ${dayOfMonth} of ${daysInMonth}`} />
+            <Stat label="On track for" value={money(projected)} sub={projected > budget ? 'over budget' : 'within budget'} tone={projected > budget ? 'text-rose-600' : 'text-slate-900'} />
           </div>
-          <div className="grid gap-5 lg:grid-cols-3">
-            <Card><Title icon="user">By member</Title>{byMember.length ? <Bars rows={byMember} total={total} /> : <p className="text-sm text-slate-400">No entries.</p>}</Card>
-            <Card><Title icon="tag">By category</Title>{byCat.length ? <Bars rows={byCat} total={total} /> : <p className="text-sm text-slate-400">No entries.</p>}</Card>
-            <Card><Title icon="calendar">By month</Title>{byMonth.length ? <Bars rows={byMonth} total={total} /> : <p className="text-sm text-slate-400">No entries.</p>}</Card>
+          <Card><Title icon="chart">Last months</Title><Trend points={trend} budget={budget} /><p className="mt-3 text-xs font-medium text-slate-400">Dashed line = current budget.</p></Card>
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Card><Title icon="tag">By category</Title><Bars rows={byCat} total={total} limits={limits} /></Card>
+            <Card><Title icon="user">By member</Title><Bars rows={byMember} total={total} /></Card>
           </div>
-          <Card><Title icon="archive" right={<button className={`${btnPrimary} !h-10`} onClick={() => { if (window.confirm('Archive all current entries and start a fresh month? Every entry is saved inside the archive.')) onArchive(); }}>Close &amp; archive</button>}>Archived months</Title>
-            <p className="text-sm font-medium text-slate-500">{archives.length} archived · entries are kept with their dates inside each archive.</p></Card>
+          <Card className="flex flex-wrap items-center justify-between gap-3">
+            <div><p className="font-extrabold text-slate-900">Close this month</p><p className="text-sm font-medium text-slate-500">Saves every entry with its dates into the archive, then starts fresh.</p></div>
+            <button className={btnPrimary} onClick={() => { if (window.confirm('Archive all current entries and start a fresh month?')) onArchive(); }}><Icon name="archive" className="h-4 w-4" />Close &amp; archive</button>
+          </Card>
         </div>
-      )}
-
-      {tab === 'budget' && (
-        <Card className="max-w-lg">
-          <Title icon="wallet">Monthly budget</Title>
-          <p className="mb-4 text-sm font-medium text-slate-500">Changing this updates the dashboard for every member immediately. Existing entries and archives are not touched.</p>
-          <Field label="Budget amount"><input type="number" min="0" step="1" value={newBudget} onChange={(e) => setNewBudget(e.target.value)} className={`${inputCls} !h-14 !text-2xl font-black`} /></Field>
-          <div className="mt-4 flex gap-2"><button className={btnPrimary} disabled={!caps.settings || !(Number(newBudget) >= 0) || Number(newBudget) === Number(budget)} onClick={() => onSaveBudget(Number(newBudget))}>Save budget</button>{[3000, 4500, 6000].map((v) => <button key={v} className={btnGhost} onClick={() => setNewBudget(v)}>{money(v)}</button>)}</div>
-          {!caps.settings && <p className="mt-3 rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-700">One-time setup needed first — open the Setup tab.</p>}
-        </Card>
       )}
 
       {tab === 'entries' && <ExpenseList rawExpenses={expenses} categories={categories} onDeleteExpense={onDeleteExpense} onUpdateExpense={onUpdateExpense} currentUser={{ role: 'admin' }} />}
 
       {tab === 'members' && (
-        <Card><Title icon="user" right={<span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">{users.length} users</span>}>Members</Title>
+        <Card><Title icon="user" right={<span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold text-indigo-700">{users.length}</span>}>Members</Title>
           <div className="divide-y divide-slate-100">{users.map((u) => (
             <div key={u.id} className="flex flex-wrap items-center justify-between gap-3 py-3.5">
               <div className="flex items-center gap-3">{u.avatar_url ? <img src={u.avatar_url} alt="" className="h-10 w-10 rounded-full object-cover" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 font-bold text-slate-500">{(u.full_name || '?')[0]}</span>}
                 <div><p className="font-bold text-slate-800">{u.full_name || 'Unnamed'}</p><p className="text-xs font-semibold text-slate-400">{money(expenses.filter((e) => e.user_id === u.id).reduce((s, e) => s + Number(e.amount), 0))} this month</p></div></div>
-              <div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${u.role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>{u.role}</span>
+              <div className="flex items-center gap-3"><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${u.role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-500'}`}>{u.role}</span>
                 <button className="text-xs font-bold text-indigo-600 cursor-pointer" onClick={() => setRole(u, u.role === 'admin' ? 'member' : 'admin')}>{u.role === 'admin' ? 'Make member' : 'Make admin'}</button></div>
             </div>))}</div></Card>
       )}
 
-      {tab === 'setup' && (
-        <Card><Title icon="db">One-time database setup</Title>
-          <p className="mb-4 text-sm font-medium text-slate-500">Adds new optional columns and a settings table to your existing Supabase database. It never deletes or changes existing rows, and is safe to run again.</p>
-          <div className="mb-4 grid gap-2 sm:grid-cols-3">{[['Entered-at date', caps.entered], ['Archive entry details', caps.entries], ['Admin budget', caps.settings]].map(([l, ok]) => <div key={l} className={`flex items-center gap-2 rounded-xl p-3 text-sm font-bold ${ok ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}><Icon name={ok ? 'check' : 'x'} className="h-4 w-4" />{l}</div>)}</div>
-          <ol className="mb-3 list-decimal space-y-1 pl-5 text-sm font-medium text-slate-600"><li>Copy the SQL below.</li><li>Supabase → SQL Editor → paste → Run.</li><li>Come back and press “Check again”.</li></ol>
-          <pre className="max-h-72 overflow-auto rounded-2xl bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">{setupSql}</pre>
-          <div className="mt-4 flex gap-2"><button className={btnPrimary} onClick={() => { navigator.clipboard?.writeText(setupSql); showToast('SQL copied'); }}>Copy SQL</button><button className={btnGhost} onClick={async () => { await recheck(); showToast('Checked'); }}>Check again</button></div></Card>
+      {tab === 'settings' && (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <Card><Title icon="wallet">Monthly budget</Title>
+            <Field label="Amount"><input type="number" min="0" value={newBudget} onChange={(e) => setNewBudget(e.target.value)} className={`${inputCls} !h-14 !text-2xl font-black`} /></Field>
+            <button className={`${btnPrimary} mt-4`} disabled={!caps.settings || !(Number(newBudget) > 0) || Number(newBudget) === Number(budget)} onClick={() => onSaveBudget(Number(newBudget))}>Save budget</button>
+          </Card>
+
+          <Card><Title icon="tag">Categories</Title>
+            <p className="mb-3 text-xs font-medium text-slate-400">Optional monthly limit per category (turns red when passed). Rename merges into an existing name.</p>
+            <ul className="space-y-2">{categories.map((c) => (
+              <li key={c} className="flex items-center gap-2">
+                {renaming === c
+                  ? <><input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} className={`${inputCls} !h-10 flex-1`} /><button className="text-xs font-bold text-indigo-600 cursor-pointer" onClick={async () => { if (await onRenameCategory(c, newName)) setRenaming(null); }}>Save</button><button className="text-xs font-bold text-slate-400 cursor-pointer" onClick={() => setRenaming(null)}>×</button></>
+                  : <><span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-700">{c}</span>
+                    <button className="text-slate-300 hover:text-indigo-600 cursor-pointer" title="Rename" onClick={() => { setRenaming(c); setNewName(c); }}><Icon name="edit" className="h-4 w-4" /></button>
+                    <input type="number" min="0" placeholder="No limit" value={draft[c] || ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} className={`${inputCls} !h-10 !w-28 text-right`} /></>}
+              </li>))}</ul>
+            <button className={`${btnPrimary} mt-4`} disabled={!caps.settings} onClick={() => onSaveLimits(draft)}>Save limits</button>
+          </Card>
+
+          <Card><Title icon="download">Export</Title>
+            <div className="flex flex-wrap gap-2"><button className={btnGhost} onClick={() => downloadFile(`expenses-${toDayInput()}.csv`, toCSV(expenses))}>Current month CSV</button><button className={btnGhost} onClick={exportArchives}>All archives CSV</button></div>
+          </Card>
+
+          <Card><Title icon="db">Database</Title>
+            {allOk ? <p className="flex items-center gap-2 text-sm font-bold text-emerald-700"><Icon name="check" className="h-4 w-4" />All set — everything is connected.</p> : (
+              <><p className="mb-3 text-sm font-bold text-amber-700">Setup is incomplete. Run this once in Supabase → SQL Editor.</p>
+                <button className={btnGhost} onClick={() => setShowSql(!showSql)}>{showSql ? 'Hide SQL' : 'Show SQL'}</button>
+                {showSql && <pre className="mt-3 max-h-60 overflow-auto rounded-2xl bg-slate-900 p-4 text-xs text-slate-100">{setupSql}</pre>}
+                <button className={`${btnGhost} mt-3`} onClick={async () => { await recheck(); showToast('Checked'); }}>Check again</button></>)}
+          </Card>
+        </div>
       )}
     </div>
   );
