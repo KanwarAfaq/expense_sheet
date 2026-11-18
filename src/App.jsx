@@ -22,6 +22,7 @@ export default function App() {
   const [archives, setArchives] = useState([]);
   const [budget, setBudget] = useState(DEFAULT_BUDGET);
   const [limits, setLimits] = useState({});
+  const [addedIds, setAddedIds] = useState([]); // entries added during this visit only
   // Which optional database upgrades are in place (see supabase/migration.sql)
   const [caps, setCaps] = useState({ settings: false, entries: false, entered: false, reports: false, checked: false });
   const [savedCats, setSavedCats] = useState(loadSaved);
@@ -96,8 +97,9 @@ export default function App() {
   const handleAddExpense = async (entry) => {
     const today = new Date().toISOString().split('T')[0];
     const created_at = entry.date === today ? new Date().toISOString() : new Date(`${entry.date}T12:00:00`).toISOString();
-    const { error } = await supabase.from('expenses').insert([{ category: entry.category, amount: entry.amount, note: entry.note, created_at, user_id: session.user.id }]);
+    const { data: ins, error } = await supabase.from('expenses').insert([{ category: entry.category, amount: entry.amount, note: entry.note, created_at, user_id: session.user.id }]).select('id');
     if (error) { showToast('Could not save the entry', 'error'); return false; }
+    if (ins?.[0]?.id) setAddedIds((p) => [...p, ins[0].id].slice(-5));
     rememberCategory(entry.category);
     showToast('Entry saved'); fetchExpenses(); return true;
   };
@@ -165,7 +167,7 @@ export default function App() {
         ) : (
           <>
             {currentView === 'home' && <Dashboard expenses={expenses} budget={budget} isAdmin={isAdmin} onArchive={handleArchiveMonth} goTo={setCurrentView} caps={caps} limits={limits} />}
-            {currentView === 'add' && <ExpenseForm onAddExpense={handleAddExpense} categories={categories} noteMap={noteMap} recent={expenses.slice(-5).reverse()} />}
+            {currentView === 'add' && <ExpenseForm onAddExpense={handleAddExpense} categories={categories} noteMap={noteMap} recent={expenses.filter((e) => addedIds.includes(e.id)).reverse()} />}
             {currentView === 'history' && <ExpenseList rawExpenses={expenses} categories={categories} onDeleteExpense={handleDeleteExpense} onUpdateExpense={handleUpdateExpense} currentUser={currentUser} />}
             {currentView === 'reports' && <div className="mx-auto max-w-2xl"><ReportSettings mode="me" userId={session.user.id} caps={caps} showToast={showToast} /></div>}
             {currentView === 'archives' && <ArchiveList archives={archives} />}

@@ -1,4 +1,4 @@
-import { admin, buildReport, reminderText, linePush, loadLedger, ymd, dow, isLastDay } from './_lib.js';
+import { admin, buildFlex, reminderText, linePush, loadLedger, ymd, dow, isLastDay } from './_lib.js';
 
 export default async function handler(req, res) {
   try {
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
       const { data: prof } = await db.from('profiles').select('role').eq('id', u.user.id).maybeSingle();
       if (prof?.role !== 'admin' && rec.user_id !== u.user.id) return res.status(403).json({ error: 'Not allowed' });
       const { expenses, budget } = await loadLedger(db);
-      await linePush(rec.line_user_id, buildReport({ kind: 'now', expenses, budget, remind: rec.remind_archive }));
+      await linePush(rec.line_user_id, buildFlex({ kind: 'now', expenses, budget, remind: rec.remind_archive }));
       return res.status(200).json({ ok: true });
     }
 
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
       try {
         let reportSent = false;
         if (kind && !sentToday) {
-          const text = buildReport({ kind, expenses, budget, now, remind: r.remind_archive });
+          const text = buildFlex({ kind, expenses, budget, now, remind: r.remind_archive });
           const emptyDay = kind === 'daily' && !expenses.some((e) => ymd(e.created_at) === today);
           if (emptyDay) out.skipped++; else { await linePush(r.line_user_id, text); out.sent++; reportSent = true; patch.last_sent_at = now.toISOString(); }
         }

@@ -15,7 +15,7 @@ async function sendNow(id) {
   const { data } = await supabase.auth.getSession();
   const r = await fetch('/api/report', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session?.access_token}` }, body: JSON.stringify({ recipient_id: id }) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || 'Could not send');
+  if (!r.ok) throw new Error(`${j.error || 'Could not send'} (HTTP ${r.status} · ${location.host})`);
 }
 
 export default function ReportSettings({ mode, userId, users = [], caps, showToast }) {
@@ -23,6 +23,8 @@ export default function ReportSettings({ mode, userId, users = [], caps, showToa
   const [rows, setRows] = useState([]);
   const [form, setForm] = useState({ name: '', line_user_id: '', frequency: 'weekly', user_id: '', remind_archive: false });
   const [busy, setBusy] = useState('');
+  const [health, setHealth] = useState(null);
+  const check = async () => { try { const r = await fetch('/api/report?health'); setHealth({ ...(await r.json()), host: location.host }); } catch { setHealth({ error: true, host: location.host }); } };
 
   const load = useCallback(async () => {
     let q = supabase.from('report_recipients').select('*').order('created_at');
@@ -82,7 +84,8 @@ export default function ReportSettings({ mode, userId, users = [], caps, showToa
           <p className="mb-1 font-bold text-slate-700">How to find a LINE user ID</p>
           Add the Expensely LINE bot as a friend and send it any message — it replies with that person’s ID. Everyone you add must be friends with the bot to receive messages.
         </div>
-        <button className={`${btnGhost} mt-3 hidden`} />
+        {admin && <div className="mt-4"><button type="button" onClick={check} className={btnGhost}>Check connection</button>
+          {health && <ul className="mt-3 space-y-1 text-xs font-bold">{health.error ? <li className="text-rose-600">Could not reach the server</li> : [['Supabase URL', health.supabase_url], ['Supabase service role key', health.service_role_key], ['LINE access token', health.line_token], ['Schedule secret', health.cron_secret]].map(([l, ok]) => <li key={l} className={ok ? 'text-emerald-600' : 'text-rose-600'}>{ok ? '✓' : '✗'} {l}</li>)}<li className="font-semibold text-slate-400">Server: {health.host}{health.vercel_env ? ` · ${health.vercel_env}` : ''}</li></ul>}</div>}
       </Card>
     </div>
   );

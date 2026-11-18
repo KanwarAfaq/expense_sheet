@@ -8,7 +8,7 @@ export default function ExpenseForm({ onAddExpense, categories, noteMap, recent 
   const [note, setNote] = useState('');
   const [showNote, setShowNote] = useState(false);
   const [date, setDate] = useState(() => toDayInput());
-  const [category, setCategory] = useState(() => localStorage.getItem('expensely_lastcat') || '');
+  const [category, setCategory] = useState('');
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const amountRef = useRef(null);
@@ -36,7 +36,7 @@ export default function ExpenseForm({ onAddExpense, categories, noteMap, recent 
     setBusy(true);
     const ok = await onAddExpense({ category: name, amount: amt, note: note.trim(), date });
     setBusy(false);
-    if (ok) { localStorage.setItem('expensely_lastcat', name); setAmount(''); setNote(''); setShowNote(false); setDate(toDayInput()); amountRef.current?.focus(); }
+    if (ok) { setCategory(''); setAmount(''); setNote(''); setShowNote(false); setDate(toDayInput()); amountRef.current?.focus(); }
   };
   const sugg = Object.values(noteMap).map((x) => x.note);
   const isToday = date === toDayInput();
