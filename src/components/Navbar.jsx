@@ -32,13 +32,13 @@ export default function Navbar({ currentView, setCurrentView, currentUser, onLog
 
           <div className="flex items-center gap-3">
             {currentUser && (
-              <div className="flex items-center gap-2.5">
+              <button onClick={() => setCurrentView('reports')} title="My LINE reports" className="flex items-center gap-2.5 cursor-pointer">
                 <div className="hidden text-right sm:block">
                   <p className="text-sm font-bold leading-tight text-slate-900">{currentUser.full_name}</p>
                   <p className={`text-[11px] font-semibold capitalize leading-tight ${isAdmin ? 'text-violet-600' : 'text-slate-400'}`}>{currentUser.role}</p>
                 </div>
                 {currentUser.avatar_url ? <img src={currentUser.avatar_url} alt="" className="h-9 w-9 rounded-full border border-slate-200 bg-slate-100 object-cover" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-700">{currentUser.full_name?.[0] || '?'}</span>}
-              </div>
+              </button>
             )}
             <button onClick={onLogout} title="Log out" className="grid h-9 w-9 place-items-center rounded-xl text-slate-500 transition hover:bg-rose-50 hover:text-rose-600 cursor-pointer"><Icon name="logout" className="h-5 w-5" /></button>
           </div>

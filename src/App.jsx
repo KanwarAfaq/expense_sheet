@@ -9,6 +9,7 @@ import ArchiveList from './components/ArchiveList';
 import Toast from './components/Toast';
 import Auth from './components/Auth';
 import AdminPanel from './components/AdminPanel';
+import ReportSettings from './components/ReportSettings';
 
 const DEFAULT_BUDGET = 4500;
 const loadSaved = () => { try { return JSON.parse(localStorage.getItem('expensely_cats') || '[]'); } catch { return []; } };
@@ -22,7 +23,7 @@ export default function App() {
   const [budget, setBudget] = useState(DEFAULT_BUDGET);
   const [limits, setLimits] = useState({});
   // Which optional database upgrades are in place (see supabase/migration.sql)
-  const [caps, setCaps] = useState({ settings: false, entries: false, entered: false, checked: false });
+  const [caps, setCaps] = useState({ settings: false, entries: false, entered: false, reports: false, checked: false });
   const [savedCats, setSavedCats] = useState(loadSaved);
   const [currentView, setCurrentView] = useState(() => localStorage.getItem('expensely_view') || 'home');
   const [loading, setLoading] = useState(true);
@@ -56,8 +57,8 @@ export default function App() {
   /* ---------- data ---------- */
   const checkCaps = useCallback(async () => {
     const test = async (table, cols) => !(await supabase.from(table).select(cols).limit(1)).error;
-    const [settings, entries, entered] = await Promise.all([test('app_settings', 'key'), test('expense_archives', 'entries'), test('expenses', 'entered_at')]);
-    setCaps({ settings, entries, entered, checked: true });
+    const [settings, entries, entered, reports] = await Promise.all([test('app_settings', 'key'), test('expense_archives', 'entries'), test('expenses', 'entered_at'), test('report_recipients', 'id')]);
+    setCaps({ settings, entries, entered, reports, checked: true });
     if (settings) {
       const { data } = await supabase.from('app_settings').select('value').eq('key', 'monthly_budget').maybeSingle();
       const v = Number(data?.value); if (Number.isFinite(v) && v > 0) setBudget(v);
@@ -166,9 +167,10 @@ export default function App() {
             {currentView === 'home' && <Dashboard expenses={expenses} budget={budget} isAdmin={isAdmin} onArchive={handleArchiveMonth} goTo={setCurrentView} caps={caps} limits={limits} />}
             {currentView === 'add' && <ExpenseForm onAddExpense={handleAddExpense} categories={categories} noteMap={noteMap} recent={expenses.slice(-5).reverse()} />}
             {currentView === 'history' && <ExpenseList rawExpenses={expenses} categories={categories} onDeleteExpense={handleDeleteExpense} onUpdateExpense={handleUpdateExpense} currentUser={currentUser} />}
+            {currentView === 'reports' && <div className="mx-auto max-w-2xl"><ReportSettings mode="me" userId={session.user.id} caps={caps} showToast={showToast} /></div>}
             {currentView === 'archives' && <ArchiveList archives={archives} />}
             {currentView === 'admin' && isAdmin && (
-              <AdminPanel expenses={expenses} archives={archives} budget={budget} caps={caps} onSaveBudget={handleSaveBudget} limits={limits} onSaveLimits={handleSaveLimits} onRenameCategory={handleRenameCategory} onArchive={handleArchiveMonth} onUpdateExpense={handleUpdateExpense} onDeleteExpense={handleDeleteExpense} categories={categories} showToast={showToast} recheck={checkCaps} />
+              <AdminPanel expenses={expenses} archives={archives} budget={budget} caps={caps} onSaveBudget={handleSaveBudget} limits={limits} onSaveLimits={handleSaveLimits} onRenameCategory={handleRenameCategory} onArchive={handleArchiveMonth} onUpdateExpense={handleUpdateExpense} onDeleteExpense={handleDeleteExpense} categories={categories} showToast={showToast} recheck={checkCaps} userId={session.user.id} />
             )}
           </>
         )}

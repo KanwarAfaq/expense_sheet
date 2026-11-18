@@ -4,9 +4,10 @@ import setupSql from '../../supabase/migration.sql?raw';
 import { money, memberName, toCSV, downloadFile, toDayInput } from '../lib/utils';
 import { Card, Title, Field, inputCls, btnPrimary, btnGhost } from './ui';
 import ExpenseList from './ExpenseList';
+import ReportSettings from './ReportSettings';
 import Icon from './Icons';
 
-const TABS = [['overview', 'Overview', 'chart'], ['entries', 'Entries', 'list'], ['members', 'Members', 'user'], ['settings', 'Settings', 'sparkle']];
+const TABS = [['overview', 'Overview', 'chart'], ['entries', 'Entries', 'list'], ['members', 'Members', 'user'], ['line', 'LINE', 'sparkle'], ['settings', 'Settings', 'sparkle']];
 
 const Stat = ({ label, value, sub, tone = 'text-slate-900' }) => (
   <Card className="!p-4"><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</p><p className={`text-2xl font-black tabular-nums ${tone}`}>{value}</p>{sub && <p className="mt-0.5 text-xs font-semibold text-slate-400">{sub}</p>}</Card>
@@ -44,7 +45,7 @@ function Trend({ points, budget }) {
   );
 }
 
-export default function AdminPanel({ expenses, archives, budget, caps, limits, onSaveBudget, onSaveLimits, onRenameCategory, onArchive, onUpdateExpense, onDeleteExpense, categories, showToast, recheck }) {
+export default function AdminPanel({ expenses, archives, budget, caps, limits, onSaveBudget, onSaveLimits, onRenameCategory, onArchive, onUpdateExpense, onDeleteExpense, categories, showToast, recheck, userId }) {
   const [tab, setTab] = useState('overview');
   const [users, setUsers] = useState([]);
   const [newBudget, setNewBudget] = useState(budget);
@@ -65,7 +66,7 @@ export default function AdminPanel({ expenses, archives, budget, caps, limits, o
   const byMember = useMemo(() => group(memberName), [expenses]); // eslint-disable-line
   const byCat = useMemo(() => group((e) => e.category), [expenses]); // eslint-disable-line
   const trend = useMemo(() => [...archives].reverse().slice(-5).map((a) => ({ k: (a.month_label || '').split(' ')[0].slice(0, 3), v: Number(a.total_expense), budget: Number(a.total_budget) })).concat([{ k: 'Now', v: total, budget, now: true }]), [archives, total, budget]);
-  const allOk = caps.settings && caps.entries && caps.entered;
+  const allOk = caps.settings && caps.entries && caps.entered && caps.reports;
 
   const setRole = async (u, role) => {
     if (role === 'member' && users.filter((x) => x.role === 'admin').length <= 1) return showToast('Keep at least one admin', 'error');
@@ -117,6 +118,8 @@ export default function AdminPanel({ expenses, archives, budget, caps, limits, o
                 <button className="text-xs font-bold text-indigo-600 cursor-pointer" onClick={() => setRole(u, u.role === 'admin' ? 'member' : 'admin')}>{u.role === 'admin' ? 'Make member' : 'Make admin'}</button></div>
             </div>))}</div></Card>
       )}
+
+      {tab === 'line' && <div className="max-w-2xl"><ReportSettings mode="admin" userId={userId} users={users} caps={caps} showToast={showToast} /></div>}
 
       {tab === 'settings' && (
         <div className="grid gap-5 lg:grid-cols-2">

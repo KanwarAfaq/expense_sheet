@@ -28,3 +28,25 @@ create policy "admins manage settings"
 
 insert into public.app_settings (key, value) values ('monthly_budget', '4500'::jsonb)
 on conflict (key) do nothing;
+
+
+-- 4) LINE report recipients (who gets daily / weekly / monthly reports)
+create table if not exists public.report_recipients (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid references auth.users(id) on delete cascade,
+  name             text not null default '',
+  line_user_id     text not null,
+  frequency        text not null default 'weekly' check (frequency in ('off','daily','weekly','monthly')),
+  remind_archive   boolean not null default false,
+  last_sent_at     timestamptz,
+  last_reminded_on date,
+  created_by       uuid,
+  created_at       timestamptz not null default now()
+);
+alter table public.report_recipients enable row level security;
+
+drop policy if exists "recipients: own or admin" on public.report_recipients;
+create policy "recipients: own or admin"
+  on public.report_recipients for all to authenticated
+  using      (user_id = auth.uid() or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
+  with check (user_id = auth.uid() or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
