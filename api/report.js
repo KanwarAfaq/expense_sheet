@@ -2,6 +2,10 @@ import { admin, buildReport, reminderText, linePush, loadLedger, ymd, dow, isLas
 
 export default async function handler(req, res) {
   try {
+    if (req.method === 'GET' && req.query?.health !== undefined) {
+      const has = (k) => !!(process.env[k] || '').trim();
+      return res.status(200).json({ supabase_url: has('SUPABASE_URL') || has('VITE_SUPABASE_URL'), service_role_key: has('SUPABASE_SERVICE_ROLE_KEY'), line_token: has('LINE_CHANNEL_ACCESS_TOKEN'), cron_secret: has('CRON_SECRET'), vercel_env: process.env.VERCEL_ENV || null });
+    }
     const db = admin();
     const auth = req.headers.authorization || '';
 

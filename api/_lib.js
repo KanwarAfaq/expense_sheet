@@ -12,7 +12,7 @@ const sum = (l) => l.reduce((s, e) => s + Number(e.amount), 0);
 
 export const admin = () => {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim().replace(/^["']|["']$/g, '');
   if (!url || !key) throw new Error('SUPABASE_SERVICE_ROLE_KEY is not set in Vercel');
   return createClient(url, key, { auth: { persistSession: false } });
 };
@@ -39,7 +39,7 @@ export function buildReport({ kind, expenses, budget, now = new Date(), remind =
 export const reminderText = () => '⏰ Expensely: today is the last day of the month. Open Expensely → Admin → Close & archive so the month is saved with every entry.';
 
 export async function linePush(to, text) {
-  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  const token = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim().replace(/^["']|["']$/g, '');
   if (!token) throw new Error('LINE_CHANNEL_ACCESS_TOKEN is not set in Vercel');
   const r = await fetch('https://api.line.me/v2/bot/message/push', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ to, messages: [{ type: 'text', text }] }) });
   if (!r.ok) throw new Error(`LINE rejected the message (${r.status}): ${(await r.text()).slice(0, 160)}`);

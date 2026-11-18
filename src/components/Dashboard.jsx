@@ -43,10 +43,10 @@ export default function Dashboard({ expenses, budget, isAdmin, onArchive, goTo, 
       {/* Hero: one number, one bar */}
       <section className="rounded-[2rem] border border-slate-200/70 bg-white p-6 shadow-sm shadow-slate-200/60 sm:p-8">
         <div className="flex items-start justify-between gap-4">
-          <div><p className="text-sm font-semibold text-slate-400">{greet}</p>
+          <div className="min-w-0"><p className="text-sm font-semibold text-slate-400">{greet}</p>
             <p className="mt-3 text-xs font-bold uppercase tracking-widest text-slate-400">{over ? 'Over budget' : 'Left this month'}</p>
             <p className={`mt-1 text-5xl font-black tracking-tight tabular-nums sm:text-6xl ${over ? 'text-rose-600' : 'text-slate-900'}`}>{money(Math.abs(left))}</p></div>
-          <button onClick={() => goTo('add')} className={`${btnPrimary} hidden !h-12 sm:inline-flex`}><Icon name="plus" className="h-5 w-5" />Add expense</button>
+          <div className="hidden shrink-0 sm:block"><button onClick={() => goTo('add')} className={`${btnPrimary} !h-12`}><Icon name="plus" className="h-5 w-5" />Add expense</button></div>
         </div>
         <div className="mt-6 h-2.5 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full transition-all duration-700 ${over ? 'bg-rose-500' : pct > 80 ? 'bg-amber-500' : 'bg-gradient-to-r from-indigo-500 to-violet-500'}`} style={{ width: `${pct}%` }} /></div>
         <div className="mt-3 flex justify-between text-sm font-semibold text-slate-500"><span>{money(spent)} spent</span><span>{pct.toFixed(0)}% of {money(budget)}</span></div>
