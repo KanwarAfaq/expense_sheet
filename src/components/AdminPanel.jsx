@@ -13,16 +13,16 @@ const Stat = ({ label, value, sub, tone = 'text-slate-900' }) => (
   <Card className="!p-4"><p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">{label}</p><p className={`text-2xl font-black tabular-nums ${tone}`}>{value}</p>{sub && <p className="mt-0.5 text-xs font-semibold text-slate-400">{sub}</p>}</Card>
 );
 
-function Bars({ rows, total, limits = {} }) {
+function Bars({ rows, total }) {
   if (!rows.length) return <p className="text-sm text-slate-400">No entries yet.</p>;
   return (
     <div className="space-y-3.5">{rows.map(([k, v]) => {
-      const lim = limits[k]; const over = lim && v > lim; const base = lim || total;
+      const base = total;
       return (
         <div key={k}>
           <div className="mb-1 flex justify-between text-sm font-bold"><span className="text-slate-600">{k}</span>
-            <span className={`tabular-nums ${over ? 'text-rose-600' : 'text-slate-900'}`}>{money(v)}{lim ? <span className="text-xs font-semibold text-slate-400"> / {money(lim)}</span> : null}</span></div>
-          <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${over ? 'bg-rose-500' : 'bg-gradient-to-r from-indigo-500 to-violet-500'}`} style={{ width: `${base ? Math.min(100, (v / base) * 100) : 0}%` }} /></div>
+            <span className="tabular-nums text-slate-900">{money(v)}</span></div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500" style={{ width: `${base ? Math.min(100, (v / base) * 100) : 0}%` }} /></div>
         </div>);
     })}</div>
   );
@@ -45,16 +45,12 @@ function Trend({ points, budget }) {
   );
 }
 
-export default function AdminPanel({ expenses, archives, budget, caps, limits, onSaveBudget, onSaveLimits, onRenameCategory, onArchive, onUpdateExpense, onDeleteExpense, categories, showToast, recheck, userId }) {
+export default function AdminPanel({ expenses, archives, budget, caps, onSaveBudget, onArchive, onUpdateExpense, onDeleteExpense, categories, showToast, recheck, userId }) {
   const [tab, setTab] = useState('overview');
   const [users, setUsers] = useState([]);
   const [newBudget, setNewBudget] = useState(budget);
-  const [draft, setDraft] = useState(limits || {});
-  const [renaming, setRenaming] = useState(null);
-  const [newName, setNewName] = useState('');
   const [showSql, setShowSql] = useState(false);
   useEffect(() => setNewBudget(budget), [budget]);
-  useEffect(() => setDraft(limits || {}), [limits]);
   const loadUsers = async () => { const { data } = await supabase.from('profiles').select('*'); if (data) setUsers(data); };
   useEffect(() => { loadUsers(); }, []);
 
@@ -96,7 +92,7 @@ export default function AdminPanel({ expenses, archives, budget, caps, limits, o
           </div>
           <Card><Title icon="chart">Last months</Title><Trend points={trend} budget={budget} /><p className="mt-3 text-xs font-medium text-slate-400">Dashed line = current budget.</p></Card>
           <div className="grid gap-5 lg:grid-cols-2">
-            <Card><Title icon="tag">By category</Title><Bars rows={byCat} total={total} limits={limits} /></Card>
+            <Card><Title icon="tag">By category</Title><Bars rows={byCat} total={total} /></Card>
             <Card><Title icon="user">By member</Title><Bars rows={byMember} total={total} /></Card>
           </div>
           <Card className="flex flex-wrap items-center justify-between gap-3">
@@ -126,19 +122,6 @@ export default function AdminPanel({ expenses, archives, budget, caps, limits, o
           <Card><Title icon="wallet">Monthly budget</Title>
             <Field label="Amount"><input type="number" min="0" value={newBudget} onChange={(e) => setNewBudget(e.target.value)} className={`${inputCls} !h-14 !text-2xl font-black`} /></Field>
             <button className={`${btnPrimary} mt-4`} disabled={!caps.settings || !(Number(newBudget) > 0) || Number(newBudget) === Number(budget)} onClick={() => onSaveBudget(Number(newBudget))}>Save budget</button>
-          </Card>
-
-          <Card><Title icon="tag">Categories</Title>
-            <p className="mb-3 text-xs font-medium text-slate-400">Optional monthly limit per category (turns red when passed). Rename merges into an existing name.</p>
-            <ul className="space-y-2">{categories.map((c) => (
-              <li key={c} className="flex items-center gap-2">
-                {renaming === c
-                  ? <><input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} className={`${inputCls} !h-10 flex-1`} /><button className="text-xs font-bold text-indigo-600 cursor-pointer" onClick={async () => { if (await onRenameCategory(c, newName)) setRenaming(null); }}>Save</button><button className="text-xs font-bold text-slate-400 cursor-pointer" onClick={() => setRenaming(null)}>×</button></>
-                  : <><span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-700">{c}</span>
-                    <button className="text-slate-300 hover:text-indigo-600 cursor-pointer" title="Rename" onClick={() => { setRenaming(c); setNewName(c); }}><Icon name="edit" className="h-4 w-4" /></button>
-                    <input type="number" min="0" placeholder="No limit" value={draft[c] || ''} onChange={(e) => setDraft({ ...draft, [c]: e.target.value })} className={`${inputCls} !h-10 !w-28 text-right`} /></>}
-              </li>))}</ul>
-            <button className={`${btnPrimary} mt-4`} disabled={!caps.settings} onClick={() => onSaveLimits(draft)}>Save limits</button>
           </Card>
 
           <Card><Title icon="download">Export</Title>

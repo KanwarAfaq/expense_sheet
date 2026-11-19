@@ -21,7 +21,6 @@ export default function App() {
   const [expenses, setExpenses] = useState([]);
   const [archives, setArchives] = useState([]);
   const [budget, setBudget] = useState(DEFAULT_BUDGET);
-  const [limits, setLimits] = useState({});
   const [addedIds, setAddedIds] = useState([]); // entries added during this visit only
   // Which optional database upgrades are in place (see supabase/migration.sql)
   const [caps, setCaps] = useState({ settings: false, entries: false, entered: false, reports: false, checked: false });
@@ -63,8 +62,6 @@ export default function App() {
     if (settings) {
       const { data } = await supabase.from('app_settings').select('value').eq('key', 'monthly_budget').maybeSingle();
       const v = Number(data?.value); if (Number.isFinite(v) && v > 0) setBudget(v);
-      const { data: lim } = await supabase.from('app_settings').select('value').eq('key', 'category_limits').maybeSingle();
-      if (lim?.value && typeof lim.value === 'object') setLimits(lim.value);
     }
   }, []);
 
@@ -119,21 +116,6 @@ export default function App() {
     setBudget(Number(value)); showToast('Budget updated for everyone'); return true;
   };
 
-  const handleSaveLimits = async (obj) => {
-    const clean = Object.fromEntries(Object.entries(obj).filter(([, v]) => Number(v) > 0).map(([k, v]) => [k, Number(v)]));
-    const { error } = await supabase.from('app_settings').upsert({ key: 'category_limits', value: clean, updated_at: new Date().toISOString(), updated_by: session.user.id });
-    if (error) { showToast('Could not save limits', 'error'); return false; }
-    setLimits(clean); showToast('Category limits saved'); return true;
-  };
-  const handleRenameCategory = async (from, to) => {
-    const name = to.trim();
-    if (!name || name === from) return false;
-    const { error } = await supabase.from('expenses').update({ category: name }).eq('category', from);
-    if (error) { showToast('Could not rename the category', 'error'); return false; }
-    if (limits[from]) handleSaveLimits({ ...Object.fromEntries(Object.entries(limits).filter(([k]) => k !== from)), [name]: (limits[name] || 0) + limits[from] });
-    showToast(`“${from}” is now “${name}” on all current entries`); fetchExpenses(); return true;
-  };
-
   const handleArchiveMonth = async () => {
     if (!expenses.length) { showToast('There is nothing to archive yet', 'error'); return; }
     if (!caps.entries) { showToast('Run the one-time database setup first, so archived entries keep their dates (Admin → Setup)', 'error'); return; }
@@ -166,13 +148,13 @@ export default function App() {
           <div className="grid place-items-center py-24 text-sm font-semibold text-slate-400"><span className="mb-3 h-8 w-8 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600" />Loading your ledger…</div>
         ) : (
           <>
-            {currentView === 'home' && <Dashboard expenses={expenses} budget={budget} isAdmin={isAdmin} onArchive={handleArchiveMonth} goTo={setCurrentView} caps={caps} limits={limits} />}
+            {currentView === 'home' && <Dashboard expenses={expenses} budget={budget} isAdmin={isAdmin} onArchive={handleArchiveMonth} goTo={setCurrentView} caps={caps} />}
             {currentView === 'add' && <ExpenseForm onAddExpense={handleAddExpense} categories={categories} noteMap={noteMap} recent={expenses.filter((e) => addedIds.includes(e.id)).reverse()} />}
             {currentView === 'history' && <ExpenseList rawExpenses={expenses} categories={categories} onDeleteExpense={handleDeleteExpense} onUpdateExpense={handleUpdateExpense} currentUser={currentUser} />}
             {currentView === 'reports' && <div className="mx-auto max-w-2xl"><ReportSettings mode="me" userId={session.user.id} caps={caps} showToast={showToast} /></div>}
             {currentView === 'archives' && <ArchiveList archives={archives} />}
             {currentView === 'admin' && isAdmin && (
-              <AdminPanel expenses={expenses} archives={archives} budget={budget} caps={caps} onSaveBudget={handleSaveBudget} limits={limits} onSaveLimits={handleSaveLimits} onRenameCategory={handleRenameCategory} onArchive={handleArchiveMonth} onUpdateExpense={handleUpdateExpense} onDeleteExpense={handleDeleteExpense} categories={categories} showToast={showToast} recheck={checkCaps} userId={session.user.id} />
+              <AdminPanel expenses={expenses} archives={archives} budget={budget} caps={caps} onSaveBudget={handleSaveBudget} onArchive={handleArchiveMonth} onUpdateExpense={handleUpdateExpense} onDeleteExpense={handleDeleteExpense} categories={categories} showToast={showToast} recheck={checkCaps} userId={session.user.id} />
             )}
           </>
         )}
